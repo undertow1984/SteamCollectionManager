@@ -1,0 +1,6762 @@
+// SteamCollectionManager Frontend Application Logic
+
+// State management
+let state = {
+  games: [],
+  folders: [], // Array of { id, name, appIds: [] }
+  activeFolderId: 'all', // 'all', 'uncategorized', or folder ID
+  searchQuery: '',
+  viewMode: 'grid', // 'grid' or 'list'
+  isConfigured: false,
+  collapsedFolders: new Set(), // Tracks collapsed folder IDs
+  selectedAppIds: new Set(), // Tracks multi-selected games
+  lastSelectedAppId: null, // Tracks anchor for Shift + Click
+  expandedTreeFolders: new Set(), // Tracks expanded folders in sidebar
+  sidecarMoveAppIds: [], // Tracks targeted games for Quick Move
+  controllerFocusArea: 'main', // 'left' (sidebar/folders), 'main' (game grid/art), 'right' (sidecar)
+  controllerFocusIndex: 0, // Focused item index
+  sidecarFocusIndex: 0, // Focused folder index inside Sidecar panel
+  sortBy: 'name', // 'name', 'metacritic', 'reviews', 'lastplayed'
+  sortDirection: 'asc', // 'asc' or 'desc'
+  groupBy: 'none', // 'none', 'genre', 'playstate', 'metacritic', 'steamrating', 'controller'
+  selectedTags: new Set(),
+  selectedGenres: new Set(),
+  selectedReviews: new Set(),
+  selectedMetacritic: new Set(),
+  selectedRatings: new Set(),
+  selectedHLTB: new Set(), // e.g. '0-5', '5-10', '10-20', '20-40', '40+'
+  multiSelectMode: false, // When true, clicking cards does multi-select instead of opening details
+  allowMultiFolderMembership: false, // When true, a game may belong to more than one normal folder
+  preDropdownArea: null,
+  preDropdownIndex: null
+};
+
+// DOM Elements
+const elements = {
+  sidebar: document.querySelector('.sidebar'),
+  mainFiltersBar: document.querySelector('.main-filters-bar'),
+  btnToggleSidebar: document.getElementById('btnToggleSidebar'),
+  btnToggleFilters: document.getElementById('btnToggleFilters'),
+  loadingOverlay: document.getElementById('loadingOverlay'),
+  loadingText: document.getElementById('loadingText'),
+  gameRunningOverlay: document.getElementById('gameRunningOverlay'),
+  gameRunningName: document.getElementById('gameRunningName'),
+  btnReturnToLibrary: document.getElementById('btnReturnToLibrary'),
+  btnRefresh: document.getElementById('btnRefresh'),
+  btnSettings: document.getElementById('btnSettings'),
+  btnExportCollections: document.getElementById('btnExportCollections'),
+  searchBar: document.getElementById('searchBar'),
+  btnClearSearch: document.getElementById('btnClearSearch'),
+  folderDropdown: document.getElementById('folderDropdown'),
+  btnNewFolder: document.getElementById('btnNewFolder'),
+  folderNavList: document.getElementById('folderNavList'),
+  activeViewTitle: document.getElementById('activeViewTitle'),
+  libraryStats: document.getElementById('libraryStats'),
+  viewGrid: document.getElementById('viewGrid'),
+  viewList: document.getElementById('viewList'),
+  mainView: document.getElementById('mainView'),
+  mainContent: document.querySelector('.main-content'),
+  setupPrompt: document.getElementById('setupPrompt'),
+  btnSetupConfig: document.getElementById('btnSetupConfig'),
+  emptyLibraryState: document.getElementById('emptyLibraryState'),
+  btnEmptyRefresh: document.getElementById('btnEmptyRefresh'),
+  foldersContainer: document.getElementById('foldersContainer'),
+  
+  // Settings Modal
+  settingsModal: document.getElementById('settingsModal'),
+  settingsForm: document.getElementById('settingsForm'),
+  inputApiKey: document.getElementById('inputApiKey'),
+  inputSteamId: document.getElementById('inputSteamId'),
+  inputWebPort: document.getElementById('inputWebPort'),
+  inputElectronPort: document.getElementById('inputElectronPort'),
+  btnCloseSettings: document.getElementById('btnCloseSettings'),
+  btnCancelSettings: document.getElementById('btnCancelSettings'),
+
+  // Help Modal
+  btnHelp: document.getElementById('btnHelp'),
+  helpModal: document.getElementById('helpModal'),
+  btnCloseHelp: document.getElementById('btnCloseHelp'),
+
+  // Folder Modal
+  folderModal: document.getElementById('folderModal'),
+  folderModalTitle: document.getElementById('folderModalTitle'),
+  folderForm: document.getElementById('folderForm'),
+  inputFolderName: document.getElementById('inputFolderName'),
+  btnCancelFolder: document.getElementById('btnCancelFolder'),
+  btnSubmitFolder: document.getElementById('btnSubmitFolder'),
+  btnCloseFolderModal: document.getElementById('btnCloseFolderModal'),
+
+  // Confirmation / Dialog Modal (controller-friendly replacement for native confirm/alert)
+  confirmModal: document.getElementById('confirmModal'),
+  confirmModalTitle: document.getElementById('confirmModalTitle'),
+  confirmModalMessage: document.getElementById('confirmModalMessage'),
+  btnConfirmCancel: document.getElementById('btnConfirmCancel'),
+  btnConfirmOk: document.getElementById('btnConfirmOk'),
+  
+  // Game Options Modal
+  gameOptionsModal: document.getElementById('gameOptionsModal'),
+  gameOptionsTitle: document.getElementById('gameOptionsTitle'),
+  gameOptionsImg: document.getElementById('gameOptionsImg'),
+  gameOptionsName: document.getElementById('gameOptionsName'),
+  gameOptionsPlaytime: document.getElementById('gameOptionsPlaytime'),
+  selectFolderMove: document.getElementById('selectFolderMove'),
+  btnCloseGameOptions: document.getElementById('btnCloseGameOptions'),
+  btnLaunchFromOptions: document.getElementById('btnLaunchFromOptions'),
+  btnUninstallFromOptions: document.getElementById('btnUninstallFromOptions'),
+  btnCloseDetails: document.getElementById('btnCloseDetails'),
+  
+  // Media elements in Game Details modal
+  videosContainer: document.getElementById('videosContainer'),
+  videoPlayerContainer: document.getElementById('videoPlayerContainer'),
+  detailVideoEl: document.getElementById('detailVideoEl'),
+  btnCloseVideo: document.getElementById('btnCloseVideo'),
+  screenshotsContainer: document.getElementById('screenshotsContainer'),
+  
+  // Lightbox
+  mediaLightbox: document.getElementById('mediaLightbox'),
+  lightboxImage: document.getElementById('lightboxImage'),
+  lightboxCloseBtn: document.getElementById('lightboxCloseBtn'),
+  lightboxPrevBtn: document.getElementById('lightboxPrevBtn'),
+  lightboxNextBtn: document.getElementById('lightboxNextBtn'),
+  lightboxCounter: document.getElementById('lightboxCounter'),
+  
+  // Sidecar Panel
+  sidecarPanel: document.getElementById('sidecarPanel'),
+  btnCloseSidecar: document.getElementById('btnCloseSidecar'),
+  sidecarTargetText: document.getElementById('sidecarTargetText'),
+  sidecarFolderList: document.getElementById('sidecarFolderList'),
+  btnToggleSidecar: document.getElementById('btnToggleSidecar'),
+  btnSidecarNewFolder: document.getElementById('btnSidecarNewFolder'),
+  btnSidecarSaveView: document.getElementById('btnSidecarSaveView'),
+  btnToggleMultiSelect: document.getElementById('btnToggleMultiSelect'),
+  btnFullscreen: document.getElementById('btnFullscreen'),
+  
+  // Segment Control Filters
+  filterInstalled: document.getElementById('filterInstalled'),
+  filterVR: document.getElementById('filterVR'),
+  filterController: document.getElementById('filterController'),
+  
+  // Alphabet Sidebar Index
+  alphabetSidebar: document.getElementById('alphabetSidebar'),
+
+  // Score Filters & Sort Dropdown
+  selectMetacritic: null, // replaced by multiselect
+  metacriticTrigger: document.getElementById('metacriticTrigger'),
+  metacriticDropdown: document.getElementById('metacriticDropdown'),
+  metacriticOptionsList: document.getElementById('metacriticOptionsList'),
+  metacriticPlaceholder: document.getElementById('metacriticPlaceholder'),
+  metacriticSelectedPills: document.getElementById('metacriticSelectedPills'),
+  selectSort: document.getElementById('selectSort'),
+  btnToggleSortDirection: document.getElementById('btnToggleSortDirection'),
+  selectGroupBy: document.getElementById('selectGroupBy'),
+
+  // Multiselect Dropdowns
+  tagsTrigger: document.getElementById('tagsTrigger'),
+  tagsDropdown: document.getElementById('tagsDropdown'),
+  tagsSearch: document.getElementById('tagsSearch'),
+  tagsOptionsList: document.getElementById('tagsOptionsList'),
+  tagsPlaceholder: document.getElementById('tagsPlaceholder'),
+  tagsSelectedPills: document.getElementById('tagsSelectedPills'),
+
+  genresTrigger: document.getElementById('genresTrigger'),
+  genresDropdown: document.getElementById('genresDropdown'),
+  genresSearch: document.getElementById('genresSearch'),
+  genresOptionsList: document.getElementById('genresOptionsList'),
+  genresPlaceholder: document.getElementById('genresPlaceholder'),
+  genresSelectedPills: document.getElementById('genresSelectedPills'),
+
+  reviewsTrigger: document.getElementById('reviewsTrigger'),
+  reviewsDropdown: document.getElementById('reviewsDropdown'),
+  reviewsOptionsList: document.getElementById('reviewsOptionsList'),
+  reviewsPlaceholder: document.getElementById('reviewsPlaceholder'),
+  reviewsSelectedPills: document.getElementById('reviewsSelectedPills'),
+
+  hltbTrigger: document.getElementById('hltbTrigger'),
+  hltbDropdown: document.getElementById('hltbDropdown'),
+  hltbOptionsList: document.getElementById('hltbOptionsList'),
+  hltbPlaceholder: document.getElementById('hltbPlaceholder'),
+  hltbSelectedPills: document.getElementById('hltbSelectedPills'),
+
+  ratingsTrigger: document.getElementById('ratingsTrigger'),
+  ratingsDropdown: document.getElementById('ratingsDropdown'),
+  ratingsOptionsList: document.getElementById('ratingsOptionsList'),
+  ratingsPlaceholder: document.getElementById('ratingsPlaceholder'),
+  ratingsSelectedPills: document.getElementById('ratingsSelectedPills'),
+
+  // Library Behavior setting toggle
+  checkAllowMultiFolder: document.getElementById('checkAllowMultiFolder'),
+
+  // Desktop integration settings (Tray / Auto-Start)
+  desktopSettingsSection: document.getElementById('desktopSettingsSection'),
+  checkMinimizeToTray: document.getElementById('checkMinimizeToTray'),
+  checkStartWithWindows: document.getElementById('checkStartWithWindows'),
+  checkStartMinimized: document.getElementById('checkStartMinimized')
+};
+
+// Active editing folders tracking
+let editingFolderId = null; // null if creating, ID if editing
+let activeOptionsGameId = null; // ID of game selected for options menu
+let currentScreenshots = []; // for lightbox gallery
+let currentLightboxIndex = 0;
+let currentMediaGameId = null;
+let currentGameDetails = {}; // short/detailed description, developers, publishers from Steam store API
+let currentHlsInstance = null; // active hls.js controller for adaptive .m3u8 trailers
+
+// Confirmation dialog state (Promise resolver for controller-friendly dialogs)
+let confirmResolve = null;
+
+// Initialize application
+document.addEventListener('DOMContentLoaded', () => {
+  setupEventListeners();
+  checkConfiguration();
+  // Initial responsive check
+  handleWindowResize();
+});
+
+function closeHelpModal() {
+  if (elements.helpModal) {
+    elements.helpModal.classList.add('hidden');
+    if (typeof lastInputDevice !== 'undefined' && lastInputDevice === 'controller') {
+      restoreControllerFocusFromModal({ scroll: false });
+    }
+  }
+}
+
+// Event listeners binding
+function setupEventListeners() {
+  // Settings buttons
+  elements.btnSettings.addEventListener('click', () => openSettingsModal());
+  elements.btnSetupConfig.addEventListener('click', () => openSettingsModal());
+  elements.btnCloseSettings.addEventListener('click', closeSettingsModal);
+  elements.btnCancelSettings.addEventListener('click', closeSettingsModal);
+  elements.settingsForm.addEventListener('submit', handleSettingsSubmit);
+
+  // Help button
+  if (elements.btnHelp) {
+    elements.btnHelp.addEventListener('click', () => {
+      if (elements.helpModal) elements.helpModal.classList.remove('hidden');
+    });
+  }
+  if (elements.btnCloseHelp) {
+    elements.btnCloseHelp.addEventListener('click', closeHelpModal);
+  }
+  const btnCloseHelpFooter = document.getElementById('btnCloseHelpFooter');
+  if (btnCloseHelpFooter) {
+    btnCloseHelpFooter.addEventListener('click', closeHelpModal);
+  }
+
+  // Close help modal on outside click
+  if (elements.helpModal) {
+    elements.helpModal.addEventListener('click', (e) => {
+      if (e.target === elements.helpModal) {
+        closeHelpModal();
+      }
+    });
+  }
+
+  // Cache refresh all
+  const btnAllCaches = document.getElementById('btnRefreshAllCaches');
+  if (btnAllCaches) {
+    btnAllCaches.addEventListener('click', async () => {
+      const types = ['hltb', 'license', 'media', 'metacritic', 'reviews', 'steamratings', 'tags'];
+      btnAllCaches.disabled = true;
+      btnAllCaches.textContent = 'Refreshing...';
+      if (licenseClearPending === undefined) licenseClearPending = false;
+      for (const t of types) {
+        try {
+          if (t === 'license') {
+            licenseClearPending = true;
+          }
+          await fetch(`/api/cache/refresh/${t}`, { method: 'POST' });
+        } catch (e) {}
+      }
+      showToast('All cache refreshes started', 'info');
+      startCacheStatusPolling();
+      setTimeout(() => {
+        btnAllCaches.disabled = false;
+        btnAllCaches.textContent = 'Refresh All';
+      }, 1000);
+    });
+  }
+
+  // Sidebar & Filters toggles
+  if (elements.btnToggleSidebar) {
+    elements.btnToggleSidebar.addEventListener('click', () => {
+      elements.sidebar.classList.toggle('collapsed');
+      
+      // Update hamburger icon or button visual state
+      const icon = elements.btnToggleSidebar.querySelector('i');
+      if (elements.sidebar.classList.contains('collapsed')) {
+        icon.className = 'fa-solid fa-angles-right';
+        elements.btnToggleSidebar.title = 'Expand Sidebar';
+      } else {
+        icon.className = 'fa-solid fa-bars';
+        elements.btnToggleSidebar.title = 'Collapse Sidebar';
+      }
+    });
+  }
+
+  if (elements.btnToggleFilters) {
+    elements.btnToggleFilters.addEventListener('click', () => {
+      const isCollapsed = elements.mainFiltersBar.classList.toggle('collapsed');
+      elements.btnToggleFilters.classList.toggle('active', !isCollapsed);
+      // Advanced filters are now always shown together with primary filters
+    });
+  }
+
+  // Refresh
+  elements.btnRefresh.addEventListener('click', refreshLibrary);
+  elements.btnEmptyRefresh.addEventListener('click', refreshLibrary);
+
+  // Export Collections to Steam
+  if (elements.btnExportCollections) {
+    elements.btnExportCollections.addEventListener('click', exportCollectionsToSteam);
+  }
+
+  // Folder Modal
+  elements.btnNewFolder.addEventListener('click', () => {
+    pendingSaveViewAppIds = null;
+    openFolderModal();
+  });
+  elements.btnCloseFolderModal.addEventListener('click', closeFolderModal);
+  elements.btnCancelFolder.addEventListener('click', closeFolderModal);
+  elements.folderForm.addEventListener('submit', handleFolderSubmit);
+
+  // Confirmation dialog buttons (controller + mouse)
+  if (elements.btnConfirmCancel) {
+    elements.btnConfirmCancel.addEventListener('click', () => closeConfirmDialog(false));
+  }
+  if (elements.btnConfirmOk) {
+    elements.btnConfirmOk.addEventListener('click', () => closeConfirmDialog(true));
+  }
+
+  // Search
+  elements.searchBar.addEventListener('input', handleSearch);
+  elements.btnClearSearch.addEventListener('click', clearSearch);
+
+  // Folder dropdown (to the right of search)
+  if (elements.folderDropdown) {
+    elements.folderDropdown.addEventListener('change', (e) => {
+      const folderId = e.target.value;
+      selectActiveFolder(folderId);
+    });
+  }
+
+  // View Mode
+  elements.viewGrid.addEventListener('click', () => setViewMode('grid'));
+  elements.viewList.addEventListener('click', () => setViewMode('list'));
+
+  // Initialize multi-select button state
+  updateMultiSelectButton();
+
+  // Game Options / Details Modal
+  elements.btnCloseGameOptions.addEventListener('click', closeGameOptionsModal);
+  if (elements.btnCloseDetails) {
+    elements.btnCloseDetails.addEventListener('click', closeGameOptionsModal);
+  }
+  elements.selectFolderMove.addEventListener('change', handleFolderMoveSelect);
+  elements.btnLaunchFromOptions.addEventListener('click', () => {
+    if (activeOptionsGameId) {
+      launchGame(activeOptionsGameId);
+      closeGameOptionsModal();
+    }
+  });
+
+  elements.btnUninstallFromOptions.addEventListener('click', () => {
+    if (activeOptionsGameId) {
+      const game = state.games.find(g => g.appid === activeOptionsGameId);
+      if (game) {
+        uninstallGame(game.appid, game.name);
+        closeGameOptionsModal();
+      }
+    }
+  });
+
+  // Video player close
+  if (elements.btnCloseVideo) {
+    elements.btnCloseVideo.addEventListener('click', closeInlineVideo);
+  }
+
+  // Lightbox bindings (safe if elements exist)
+  if (elements.lightboxCloseBtn) elements.lightboxCloseBtn.addEventListener('click', closeLightbox);
+  if (elements.lightboxPrevBtn) elements.lightboxPrevBtn.addEventListener('click', () => navigateLightbox(-1));
+  if (elements.lightboxNextBtn) elements.lightboxNextBtn.addEventListener('click', () => navigateLightbox(1));
+  if (elements.mediaLightbox) {
+    elements.mediaLightbox.addEventListener('click', (e) => {
+      if (e.target === elements.mediaLightbox || e.target.classList.contains('lightbox-backdrop')) {
+        closeLightbox();
+      }
+    });
+  }
+  // Keyboard support for lightbox + game details modal close
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      if (elements.mediaLightbox && !elements.mediaLightbox.classList.contains('hidden')) {
+        closeLightbox();
+        return;
+      }
+      if (elements.confirmModal && !elements.confirmModal.classList.contains('hidden')) {
+        closeConfirmDialog(false);
+        return;
+      }
+      if (elements.gameOptionsModal && !elements.gameOptionsModal.classList.contains('hidden')) {
+        closeGameOptionsModal();
+        return;
+      }
+      if (elements.folderModal && !elements.folderModal.classList.contains('hidden')) {
+        closeFolderModal();
+        return;
+      }
+      if (elements.settingsModal && !elements.settingsModal.classList.contains('hidden')) {
+        closeSettingsModal();
+        return;
+      }
+    }
+    if (!elements.mediaLightbox || elements.mediaLightbox.classList.contains('hidden')) return;
+    if (e.key === 'ArrowLeft') navigateLightbox(-1);
+    if (e.key === 'ArrowRight') navigateLightbox(1);
+  });
+
+  // Quick Move Sidecar
+  elements.btnCloseSidecar.addEventListener('click', () => closeSidecar(true, false));
+  if (elements.btnToggleSidecar) {
+    elements.btnToggleSidecar.addEventListener('click', toggleSidecar);
+  }
+
+  // Sidecar top actions: + for new folder, Save View
+  if (elements.btnSidecarNewFolder) {
+    elements.btnSidecarNewFolder.addEventListener('click', () => {
+      pendingSaveViewAppIds = null;
+      openFolderModal();
+    });
+  }
+  if (elements.btnSidecarSaveView) {
+    elements.btnSidecarSaveView.addEventListener('click', saveCurrentViewAsFolder);
+  }
+
+  // Multi-select mode toggle
+  if (elements.btnToggleMultiSelect) {
+    elements.btnToggleMultiSelect.addEventListener('click', () => {
+      if (state.multiSelectMode) {
+        // Exiting multi-select: unselect everything
+        exitMultiSelectMode();
+      } else {
+        state.multiSelectMode = true;
+        updateMultiSelectButton();
+      }
+    });
+  }
+
+  // Fullscreen toggle
+  if (elements.btnFullscreen) {
+    elements.btnFullscreen.addEventListener('click', toggleFullscreen);
+  }
+
+  document.addEventListener('fullscreenchange', updateFullscreenIcon);
+
+  if (window.electronAPI && window.electronAPI.onFullscreenChanged) {
+    window.electronAPI.onFullscreenChanged((isFull) => {
+      if (!elements.btnFullscreen) return;
+      const icon = elements.btnFullscreen.querySelector('i');
+      if (!icon) return;
+      icon.className = isFull ? 'fa-solid fa-compress' : 'fa-solid fa-expand';
+      elements.btnFullscreen.title = isFull ? 'Exit Fullscreen' : 'Toggle Fullscreen';
+    });
+  }
+
+  // Metacritic multiselect filter
+  if (elements.metacriticTrigger) {
+    elements.metacriticTrigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      elements.metacriticDropdown.classList.toggle('hidden');
+      elements.metacriticTrigger.classList.toggle('active');
+      elements.tagsDropdown.classList.add('hidden');
+      elements.tagsTrigger.classList.remove('active');
+      elements.genresDropdown.classList.add('hidden');
+      elements.genresTrigger.classList.remove('active');
+      elements.reviewsDropdown.classList.add('hidden');
+      elements.reviewsTrigger.classList.remove('active');
+      elements.ratingsDropdown.classList.add('hidden');
+      elements.ratingsTrigger.classList.remove('active');
+      elements.hltbDropdown.classList.add('hidden');
+      elements.hltbTrigger.classList.remove('active');
+    });
+  }
+
+  if (elements.metacriticOptionsList) {
+    elements.metacriticOptionsList.addEventListener('change', (e) => {
+      if (e.target.tagName === 'INPUT' && e.target.type === 'checkbox') {
+        const val = e.target.value;
+        if (e.target.checked) {
+          state.selectedMetacritic.add(val);
+        } else {
+          state.selectedMetacritic.delete(val);
+        }
+        updateMultiselectTrigger('metacritic');
+        state.selectedAppIds.clear();
+        state.lastSelectedAppId = null;
+        updateResetButtonVisibility();
+        renderDashboard();
+      }
+    });
+  }
+
+  // Steam rating multiselect filter listener
+  if (elements.ratingsTrigger) {
+    elements.ratingsTrigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      elements.ratingsDropdown.classList.toggle('hidden');
+      elements.ratingsTrigger.classList.toggle('active');
+      elements.tagsDropdown.classList.add('hidden');
+      elements.tagsTrigger.classList.remove('active');
+      elements.genresDropdown.classList.add('hidden');
+      elements.genresTrigger.classList.remove('active');
+      elements.reviewsDropdown.classList.add('hidden');
+      elements.reviewsTrigger.classList.remove('active');
+      elements.metacriticDropdown.classList.add('hidden');
+      elements.metacriticTrigger.classList.remove('active');
+      elements.hltbDropdown.classList.add('hidden');
+      elements.hltbTrigger.classList.remove('active');
+    });
+  }
+
+  if (elements.ratingsOptionsList) {
+    elements.ratingsOptionsList.addEventListener('change', (e) => {
+      if (e.target.tagName === 'INPUT' && e.target.type === 'checkbox') {
+        const val = e.target.value;
+        if (e.target.checked) {
+          state.selectedRatings.add(val);
+        } else {
+          state.selectedRatings.delete(val);
+        }
+        updateMultiselectTrigger('ratings');
+        
+        state.selectedAppIds.clear();
+        state.lastSelectedAppId = null;
+        renderDashboard();
+      }
+    });
+  }
+
+  // Steam reviews count multiselect filter listener
+  if (elements.reviewsTrigger) {
+    elements.reviewsTrigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      elements.reviewsDropdown.classList.toggle('hidden');
+      elements.reviewsTrigger.classList.toggle('active');
+      elements.tagsDropdown.classList.add('hidden');
+      elements.tagsTrigger.classList.remove('active');
+      elements.genresDropdown.classList.add('hidden');
+      elements.genresTrigger.classList.remove('active');
+      elements.ratingsDropdown.classList.add('hidden');
+      elements.ratingsTrigger.classList.remove('active');
+      elements.metacriticDropdown.classList.add('hidden');
+      elements.metacriticTrigger.classList.remove('active');
+      elements.hltbDropdown.classList.add('hidden');
+      elements.hltbTrigger.classList.remove('active');
+    });
+  }
+
+  if (elements.reviewsOptionsList) {
+    elements.reviewsOptionsList.addEventListener('change', (e) => {
+      if (e.target.tagName === 'INPUT' && e.target.type === 'checkbox') {
+        const val = e.target.value;
+        if (e.target.checked) {
+          state.selectedReviews.add(val);
+        } else {
+          state.selectedReviews.delete(val);
+        }
+        updateMultiselectTrigger('reviews');
+        
+        state.selectedAppIds.clear();
+        state.lastSelectedAppId = null;
+        renderDashboard();
+      }
+    });
+  }
+
+  // HLTB multiselect filter listener
+  if (elements.hltbTrigger) {
+    elements.hltbTrigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      elements.hltbDropdown.classList.toggle('hidden');
+      elements.hltbTrigger.classList.toggle('active');
+      elements.tagsDropdown.classList.add('hidden');
+      elements.tagsTrigger.classList.remove('active');
+      elements.genresDropdown.classList.add('hidden');
+      elements.genresTrigger.classList.remove('active');
+      elements.reviewsDropdown.classList.add('hidden');
+      elements.reviewsTrigger.classList.remove('active');
+      elements.ratingsDropdown.classList.add('hidden');
+      elements.ratingsTrigger.classList.remove('active');
+      elements.metacriticDropdown.classList.add('hidden');
+      elements.metacriticTrigger.classList.remove('active');
+    });
+  }
+
+  if (elements.hltbOptionsList) {
+    elements.hltbOptionsList.addEventListener('change', (e) => {
+      if (e.target.tagName === 'INPUT' && e.target.type === 'checkbox') {
+        const val = e.target.value;
+        if (e.target.checked) {
+          state.selectedHLTB.add(val);
+        } else {
+          state.selectedHLTB.delete(val);
+        }
+        updateMultiselectTrigger('hltb');
+        
+        state.selectedAppIds.clear();
+        state.lastSelectedAppId = null;
+        updateResetButtonVisibility();
+        renderDashboard();
+      }
+    });
+  }
+
+  // Sort Selector listener
+  if (elements.selectSort) {
+    elements.selectSort.addEventListener('change', () => {
+      const val = elements.selectSort.value;
+      state.sortBy = val;
+      state.sortDirection = (val === 'name') ? 'asc' : 'desc';
+      renderDashboard();
+      if (lastInputDevice === 'controller') {
+        state.controllerFocusArea = 'main';
+        state.controllerFocusIndex = getRestoredMainFocusIndex();
+        updateControllerFocus({ scroll: false });
+      }
+    });
+  }
+
+  // Sort Direction Toggle Button
+  if (elements.btnToggleSortDirection) {
+    elements.btnToggleSortDirection.addEventListener('click', () => {
+      state.sortDirection = state.sortDirection === 'asc' ? 'desc' : 'asc';
+      renderDashboard();
+      if (lastInputDevice === 'controller') {
+        state.controllerFocusArea = 'main';
+        state.controllerFocusIndex = getRestoredMainFocusIndex();
+        updateControllerFocus({ scroll: false });
+      }
+    });
+  }
+
+  // Group By Selector listener
+  if (elements.selectGroupBy) {
+    elements.selectGroupBy.addEventListener('change', () => {
+      state.groupBy = elements.selectGroupBy.value;
+      renderMainLibrary();
+      if (lastInputDevice === 'controller') {
+        state.controllerFocusArea = 'main';
+        state.controllerFocusIndex = getRestoredMainFocusIndex();
+        updateControllerFocus({ scroll: false });
+      }
+    });
+  }
+
+  // Multiselect dropdown toggles and click outside
+  if (elements.tagsTrigger) {
+    elements.tagsTrigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      elements.tagsDropdown.classList.toggle('hidden');
+      elements.tagsTrigger.classList.toggle('active');
+      elements.genresDropdown.classList.add('hidden');
+      elements.genresTrigger.classList.remove('active');
+      elements.reviewsDropdown.classList.add('hidden');
+      elements.reviewsTrigger.classList.remove('active');
+      elements.ratingsDropdown.classList.add('hidden');
+      elements.ratingsTrigger.classList.remove('active');
+      elements.metacriticDropdown.classList.add('hidden');
+      elements.metacriticTrigger.classList.remove('active');
+      elements.hltbDropdown.classList.add('hidden');
+      elements.hltbTrigger.classList.remove('active');
+      if (!elements.tagsDropdown.classList.contains('hidden')) {
+        elements.tagsSearch.value = '';
+        filterMultiselectOptions('tags', '');
+        elements.tagsSearch.focus();
+      }
+    });
+  }
+
+  if (elements.genresTrigger) {
+    elements.genresTrigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      elements.genresDropdown.classList.toggle('hidden');
+      elements.genresTrigger.classList.toggle('active');
+      elements.tagsDropdown.classList.add('hidden');
+      elements.tagsTrigger.classList.remove('active');
+      elements.reviewsDropdown.classList.add('hidden');
+      elements.reviewsTrigger.classList.remove('active');
+      elements.ratingsDropdown.classList.add('hidden');
+      elements.ratingsTrigger.classList.remove('active');
+      elements.metacriticDropdown.classList.add('hidden');
+      elements.metacriticTrigger.classList.remove('active');
+      elements.hltbDropdown.classList.add('hidden');
+      elements.hltbTrigger.classList.remove('active');
+      if (!elements.genresDropdown.classList.contains('hidden')) {
+        elements.genresSearch.value = '';
+        filterMultiselectOptions('genres', '');
+        elements.genresSearch.focus();
+      }
+    });
+  }
+
+  if (elements.tagsSearch) {
+    elements.tagsSearch.addEventListener('click', (e) => e.stopPropagation());
+    elements.tagsSearch.addEventListener('input', (e) => {
+      filterMultiselectOptions('tags', e.target.value);
+    });
+  }
+
+  if (elements.genresSearch) {
+    elements.genresSearch.addEventListener('click', (e) => e.stopPropagation());
+    elements.genresSearch.addEventListener('input', (e) => {
+      filterMultiselectOptions('genres', e.target.value);
+    });
+  }
+
+  // Global modal close on background click
+  window.addEventListener('click', (e) => {
+    // If click is on/inside the virtual keyboard, we MUST NOT close the dropdowns or modals!
+    if (e.target.closest('#virtualKeyboard')) {
+      return;
+    }
+
+    if (e.target === elements.settingsModal) closeSettingsModal();
+    if (e.target === elements.folderModal) closeFolderModal();
+    if (e.target === elements.gameOptionsModal) closeGameOptionsModal();
+    if (e.target === elements.confirmModal) closeConfirmDialog(false);
+    if (e.target === elements.sidecarPanel) closeSidecar();
+
+    // Also close video player area if clicking outside it inside the details modal
+    if (elements.videoPlayerContainer && !elements.videoPlayerContainer.classList.contains('hidden')) {
+      if (!e.target.closest('#videoPlayerContainer') && !e.target.closest('.video-thumb')) {
+        closeInlineVideo();
+      }
+    }
+
+    // Close multiselects if click is outside
+    if (elements.metacriticDropdown && !elements.metacriticDropdown.classList.contains('hidden') && !e.target.closest('#metacriticFilterGroup')) {
+      elements.metacriticDropdown.classList.add('hidden');
+      elements.metacriticTrigger.classList.remove('active');
+    }
+    if (elements.tagsDropdown && !elements.tagsDropdown.classList.contains('hidden') && !e.target.closest('#tagsFilterGroup')) {
+      elements.tagsDropdown.classList.add('hidden');
+      elements.tagsTrigger.classList.remove('active');
+    }
+    if (elements.genresDropdown && !elements.genresDropdown.classList.contains('hidden') && !e.target.closest('#genresFilterGroup')) {
+      elements.genresDropdown.classList.add('hidden');
+      elements.genresTrigger.classList.remove('active');
+    }
+    if (elements.hltbDropdown && !elements.hltbDropdown.classList.contains('hidden') && !e.target.closest('#hltbFilterGroup')) {
+      elements.hltbDropdown.classList.add('hidden');
+      elements.hltbTrigger.classList.remove('active');
+    }
+    if (elements.reviewsDropdown && !elements.reviewsDropdown.classList.contains('hidden') && !e.target.closest('#reviewsFilterGroup')) {
+      elements.reviewsDropdown.classList.add('hidden');
+      elements.reviewsTrigger.classList.remove('active');
+    }
+    if (elements.ratingsDropdown && !elements.ratingsDropdown.classList.contains('hidden') && !e.target.closest('#ratingsFilterGroup')) {
+      elements.ratingsDropdown.classList.add('hidden');
+      elements.ratingsTrigger.classList.remove('active');
+    }
+    if (elements.hltbDropdown && !elements.hltbDropdown.classList.contains('hidden') && !e.target.closest('#hltbFilterGroup')) {
+      elements.hltbDropdown.classList.add('hidden');
+      elements.hltbTrigger.classList.remove('active');
+    }
+  });
+
+  // Tristate filter buttons setup (Installation, Controller, VR)
+  setupTristateFilter(elements.filterInstalled);
+  setupTristateFilter(elements.filterVR);
+  setupTristateFilter(elements.filterController);
+  // Defaults are already set via data-state in the HTML (on / off / all)
+
+  // Advanced filters row is now always visible (no separate toggle)
+
+  // Clear All Filters
+  const btnClearAll = document.getElementById('btnClearAllFilters');
+  if (btnClearAll) {
+    btnClearAll.addEventListener('click', () => {
+      // 1. Reset tristate filters to neutral ("all")
+      [elements.filterInstalled, elements.filterVR, elements.filterController].forEach(btn => {
+        if (btn) setTristateState(btn, 'all');
+      });
+      // 2. Reset selects & multiselects
+      state.selectedMetacritic.clear();
+      state.selectedTags.clear();
+      state.selectedHLTB.clear();
+      state.selectedGenres.clear();
+      state.selectedReviews.clear();
+      state.selectedRatings.clear();
+      updateMultiselectTrigger('metacritic');
+      updateMultiselectTrigger('tags');
+      updateMultiselectTrigger('genres');
+      updateMultiselectTrigger('reviews');
+      updateMultiselectTrigger('ratings');
+      updateMultiselectTrigger('hltb');
+      
+      // 3. Refresh checkbox states
+      const metacriticChecks = document.querySelectorAll('#metacriticOptionsList input[type="checkbox"]');
+      metacriticChecks.forEach(c => c.checked = false);
+      const tagChecks = document.querySelectorAll('#tagsOptionsList input[type="checkbox"]');
+      tagChecks.forEach(c => c.checked = false);
+      const genreChecks = document.querySelectorAll('#genresOptionsList input[type="checkbox"]');
+      genreChecks.forEach(c => c.checked = false);
+      const reviewChecks = document.querySelectorAll('#reviewsOptionsList input[type="checkbox"]');
+      reviewChecks.forEach(c => c.checked = false);
+      const ratingChecks = document.querySelectorAll('#ratingsOptionsList input[type="checkbox"]');
+      ratingChecks.forEach(c => c.checked = false);
+      const hltbChecks = document.querySelectorAll('#hltbOptionsList input[type="checkbox"]');
+      hltbChecks.forEach(c => c.checked = false);
+
+      // 4. Reset selection and title stats
+      state.selectedAppIds.clear();
+      state.lastSelectedAppId = null;
+      
+      // Render - reset to top for filter clear
+      if (elements.mainView) {
+        elements.mainView.scrollTop = 0;
+      }
+      updateResetButtonVisibility();
+      renderDashboard();
+      showToast('Filters reset successfully', 'info');
+    });
+  }
+
+  // Gamepad Controller Events
+  window.addEventListener('gamepadconnected', (e) => {
+    showToast(`Controller connected: ${e.gamepad.id.substring(0, 25)}...`, 'success');
+    lastInputDevice = 'controller';
+    startGamepadLoop();
+  });
+
+  window.addEventListener('gamepaddisconnected', () => {
+    showToast('Controller disconnected', 'info');
+    stopGamepadLoop();
+  });
+
+  window.addEventListener('click', () => {
+    const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+    if (Array.from(gamepads).some(gp => gp !== null)) {
+      startGamepadLoop();
+    }
+  });
+
+  window.addEventListener('keydown', () => {
+    lastInputDevice = 'keyboard'; // physical keyboard: do not show VK
+    const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+    if (Array.from(gamepads).some(gp => gp !== null)) {
+      startGamepadLoop();
+    }
+  });
+
+  // Mouse input: mark device, hide VK (VK only for controller), clear highlights
+  document.addEventListener('mousedown', (e) => {
+    lastInputDevice = 'mouse';
+    const kb = document.getElementById('virtualKeyboard');
+    if (kb && !kb.classList.contains('hidden')) {
+      if (!kb.contains(e.target)) {
+        hideVirtualKeyboard();
+      }
+    }
+    document.querySelectorAll('.controller-focused').forEach(el => el.classList.remove('controller-focused'));
+  });
+
+  // Also on touch/pointer for tablets etc.
+  document.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse') return; // already handled
+    lastInputDevice = 'mouse';
+    const kb = document.getElementById('virtualKeyboard');
+    if (kb && !kb.classList.contains('hidden')) {
+      if (!kb.contains(e.target)) {
+        hideVirtualKeyboard();
+      }
+    }
+  });
+
+  // Virtual keyboard only shows via controller (see updateControllerFocus for inputs)
+  // Close if the text input loses DOM focus
+  document.addEventListener('focusout', (e) => {
+    if (e.target.matches('input, textarea')) {
+      setTimeout(() => {
+        const active = document.activeElement;
+        if (!active || !active.matches('input, textarea')) {
+          const kb = document.getElementById('virtualKeyboard');
+          if (kb && !kb.classList.contains('hidden')) {
+            hideVirtualKeyboard();
+          }
+        }
+      }, 100);
+    }
+  });
+
+  // Ensure header close button works
+  const vkClose = document.getElementById('vkCloseBtn');
+  if (vkClose) {
+    vkClose.onclick = (e) => {
+      e.preventDefault();
+      hideVirtualKeyboard();
+    };
+  }
+}
+
+// ----------------------------------------------------
+// API Requests
+// ----------------------------------------------------
+
+async function showLoading(show, text = 'Loading...') {
+  elements.loadingText.textContent = text;
+  if (show) {
+    elements.loadingOverlay.classList.remove('hidden');
+  } else {
+    elements.loadingOverlay.classList.add('hidden');
+  }
+}
+
+// Check if configuration exists
+async function checkConfiguration() {
+  try {
+    const res = await fetch('/api/config');
+    const data = await res.json();
+    state.isConfigured = data.isConfigured;
+    
+    // Always populate credential + port fields
+    elements.inputApiKey.value = data.apiKey || '';
+    elements.inputSteamId.value = data.steamId || '';
+    if (elements.inputWebPort) elements.inputWebPort.value = data.webPort || 3000;
+    if (elements.inputElectronPort) elements.inputElectronPort.value = data.electronPort || 3001;
+
+    // Populate library behavior setting
+    state.allowMultiFolderMembership = data.allowMultiFolderMembership === true;
+    if (elements.checkAllowMultiFolder) {
+      elements.checkAllowMultiFolder.checked = state.allowMultiFolderMembership;
+    }
+
+    // Populate desktop settings if in Electron
+    if (window.electronAPI) {
+      if (elements.desktopSettingsSection) elements.desktopSettingsSection.classList.remove('hidden');
+      if (elements.checkMinimizeToTray) {
+        elements.checkMinimizeToTray.checked = data.minimizeToTrayOnClose !== false;
+      }
+      if (elements.checkStartWithWindows) {
+        elements.checkStartWithWindows.checked = data.startWithWindows === true;
+      }
+      if (elements.checkStartMinimized) {
+        elements.checkStartMinimized.checked = data.startMinimizedToTray === true;
+      }
+      if (document.getElementById('checkEnableControllerShortcut')) {
+        document.getElementById('checkEnableControllerShortcut').checked = data.enableControllerShortcut !== false;
+      }
+      state.enableControllerShortcut = data.enableControllerShortcut !== false;
+    } else {
+      if (elements.desktopSettingsSection) elements.desktopSettingsSection.classList.add('hidden');
+    }
+
+    populateFolderDropdown();
+
+    if (data.isConfigured) {
+      elements.setupPrompt.classList.add('hidden');
+      
+      // Load app data
+      await loadFolders();
+      populateFolderDropdown();
+      await loadGames();
+    } else {
+      elements.setupPrompt.classList.remove('hidden');
+      elements.foldersContainer.classList.add('hidden');
+      updateStats();
+    }
+  } catch (error) {
+    console.error('Failed to read config:', error);
+    showToast('Failed to connect to the backend server.', 'danger');
+  }
+}
+
+// Save Settings configuration
+async function handleSettingsSubmit(e) {
+  e.preventDefault();
+  if (licenseClearPending) {
+    try {
+      await fetch('/api/cache/refresh/license', { method: 'POST' });
+    } catch (e) {}
+    licenseClearPending = false;
+  }
+  const apiKey = elements.inputApiKey.value.trim();
+  const steamId = elements.inputSteamId.value.trim();
+  const webPort = parseInt(elements.inputWebPort ? elements.inputWebPort.value : '', 10) || 3000;
+  const electronPort = parseInt(elements.inputElectronPort ? elements.inputElectronPort.value : '', 10) || 3001;
+  const allowMultiFolderMembership = elements.checkAllowMultiFolder ? elements.checkAllowMultiFolder.checked : false;
+  const minimizeToTrayOnClose = elements.checkMinimizeToTray ? elements.checkMinimizeToTray.checked : true;
+  const startWithWindows = elements.checkStartWithWindows ? elements.checkStartWithWindows.checked : false;
+  const startMinimizedToTray = elements.checkStartMinimized ? elements.checkStartMinimized.checked : false;
+  const checkShortcut = document.getElementById('checkEnableControllerShortcut');
+  const enableControllerShortcut = checkShortcut ? checkShortcut.checked : false;
+
+  // Prompt when disabling multi-folder mode (enforces 1 game per folder)
+  if (state.allowMultiFolderMembership && !allowMultiFolderMembership) {
+    const confirmed = await showConfirmDialog(
+      'A Steam import (e.g. refreshing collections or your library) may disorganize the current folders as it will adhere to the new rule of 1 game per folder.',
+      {
+        title: 'Disable Multi-Folder Mode?',
+        confirmText: 'Disable Anyway',
+        cancelText: 'Keep Enabled',
+        danger: true
+      }
+    );
+    if (!confirmed) {
+      if (elements.checkAllowMultiFolder) {
+        elements.checkAllowMultiFolder.checked = true;
+      }
+      return;
+    }
+  }
+
+  showLoading(true, 'Saving configuration & loading games...');
+  try {
+    const res = await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        apiKey,
+        steamId,
+        webPort,
+        electronPort,
+        allowMultiFolderMembership,
+        minimizeToTrayOnClose,
+        startWithWindows,
+        startMinimizedToTray,
+        enableControllerShortcut
+      })
+    });
+    const data = await res.json();
+
+    if (data.error) {
+      throw new Error(data.error);
+    }
+
+    closeSettingsModal();
+    if (window.electronAPI && window.electronAPI.updateTraySettings) {
+      window.electronAPI.updateTraySettings();
+    }
+    state.isConfigured = true;
+    state.allowMultiFolderMembership = allowMultiFolderMembership;
+    elements.setupPrompt.classList.add('hidden');
+    
+    // Load lists
+    await loadFolders();
+    populateFolderDropdown();
+    await loadGames();
+
+    // Inform user that port changes require restart to take effect
+    showToast('Settings saved. Restart the app to apply any port changes.', 'success');
+  } catch (error) {
+    showToast(error.message || 'Failed to save settings.', 'danger');
+  } finally {
+    showLoading(false);
+  }
+}
+
+// Load folders
+async function loadFolders() {
+  try {
+    const res = await fetch(`/api/categories?t=${Date.now()}`);
+    const data = await res.json();
+    let folders = data.folders || [];
+    
+    // Deduplicate game memberships across normal/static folders (only in single-folder mode)
+    if (!state.allowMultiFolderMembership) {
+      const seenNormalAppIds = new Set();
+      folders.forEach(f => {
+        if (!f.filterSpec && f.appIds) {
+          const uniqueIds = [];
+          f.appIds.forEach(id => {
+            const numId = Number(id);
+            if (!seenNormalAppIds.has(numId)) {
+              seenNormalAppIds.add(numId);
+              uniqueIds.push(numId);
+            }
+          });
+          f.appIds = uniqueIds;
+        }
+      });
+    }
+
+    folders.forEach(f => {
+      if (f.filterSpec && !f.manualAppIds) {
+        f.manualAppIds = [];
+      }
+    });
+    state.folders = folders;
+    populateFolderDropdown();
+  } catch (error) {
+    console.error('Failed to load folders:', error);
+    state.folders = [];
+    populateFolderDropdown();
+  }
+}
+
+// Save folders to server
+async function saveFolders() {
+  try {
+    const res = await fetch('/api/categories', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folders: state.folders })
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+  } catch (error) {
+    console.error('Failed to save folders to backend:', error);
+    showToast('Failed to save folder categorization on server.', 'danger');
+  }
+}
+
+// Load games
+async function loadGames() {
+  showLoading(true, 'Fetching your Steam games...');
+  try {
+    const res = await fetch(`/api/games?t=${Date.now()}`);
+    const data = await res.json();
+    
+    if (data.error) {
+      showToast(data.error, 'danger');
+      if (data.error.includes('credentials') || data.error.includes('configured')) {
+        state.isConfigured = false;
+        elements.setupPrompt.classList.remove('hidden');
+        elements.foldersContainer.classList.add('hidden');
+      } else {
+        elements.emptyLibraryState.classList.remove('hidden');
+      }
+      state.games = [];
+    } else {
+      state.games = data.games || [];
+      if (state.games.length === 0) {
+        elements.emptyLibraryState.classList.remove('hidden');
+        elements.foldersContainer.classList.add('hidden');
+      } else {
+        elements.emptyLibraryState.classList.add('hidden');
+        elements.foldersContainer.classList.remove('hidden');
+      }
+      populateMultiselectFilters();
+      updateMultiselectTrigger('hltb');
+      renderDashboard();
+    }
+  } catch (error) {
+    console.error('Failed to load games:', error);
+    showToast('Could not fetch games list.', 'danger');
+  } finally {
+    showLoading(false);
+  }
+}
+
+// Force sync library with Steam API
+async function refreshLibrary() {
+  if (!state.isConfigured) {
+    openSettingsModal();
+    return;
+  }
+
+  const confirmed = await showConfirmDialog(
+    "Syncing will fetch the latest games from Steam and also import your Steam collections.\n\nThis will preserve your custom folders and merge them with Steam collections.",
+    { 
+      title: 'Sync Library & Import Collections', 
+      confirmText: 'Sync & Import', 
+      cancelText: 'Cancel' 
+    }
+  );
+  if (!confirmed) return;
+
+  showLoading(true, 'Syncing library with Steam API and importing collections...');
+  try {
+    const res = await fetch('/api/games/refresh', { method: 'POST' });
+    const data = await res.json();
+    
+    if (data.error) {
+      throw new Error(data.error);
+    }
+    
+    state.games = data.games || [];
+    if (state.games.length === 0) {
+      elements.emptyLibraryState.classList.remove('hidden');
+      elements.foldersContainer.classList.add('hidden');
+    } else {
+      elements.emptyLibraryState.classList.add('hidden');
+      elements.foldersContainer.classList.remove('hidden');
+    }
+    populateMultiselectFilters();
+
+    // Import Steam collections as part of sync (light mode to avoid closing Steam)
+    try {
+      const importRes = await fetch('/api/config/import-collections?skipClose=true', { method: 'POST' });
+      const importData = await importRes.json();
+      if (importData.error) {
+        console.warn("Steam collections import failed during sync:", importData.error);
+      }
+    } catch (impErr) {
+      console.warn("Collections sync during refresh failed:", impErr);
+    }
+
+    await loadFolders();
+
+    showToast('Library and collections synced successfully!', 'success');
+    renderDashboard();
+  } catch (error) {
+    showToast(error.message || 'Sync failed. Check Steam profile privacy settings.', 'danger');
+  } finally {
+    showLoading(false);
+  }
+}
+
+// Export custom folders to local Steam collections
+async function exportCollectionsToSteam() {
+  if (!state.isConfigured) {
+    openSettingsModal();
+    return;
+  }
+
+  const proceed = await showConfirmDialog(
+    "This will temporarily close your Steam client, write your custom folders as Steam collections, and automatically relaunch Steam.\n\nClick OK to proceed.",
+    { title: 'Export to Steam', confirmText: 'Export', cancelText: 'Cancel' }
+  );
+  if (!proceed) return;
+
+  showLoading(true, 'Exporting collections to Steam...');
+  try {
+    const res = await fetch('/api/config/export-collections', { method: 'POST' });
+    const data = await res.json();
+    
+    if (res.status === 400 && data.error) {
+      showToast(`Steam is still running: ${data.error}`, 'danger');
+      return;
+    }
+
+    if (data.error) {
+      throw new Error(data.error);
+    }
+    
+    showToast(`Successfully exported ${data.count} categories as Steam collections!`, 'success');
+    // Important note shown as toast (non-blocking)
+    setTimeout(() => {
+      showToast('You may need to restart the Steam client to see the new collections.', 'info');
+    }, 1200);
+  } catch (error) {
+    showToast(error.message || 'Export failed.', 'danger');
+  } finally {
+    showLoading(false);
+  }
+}
+
+// Trigger Launch Game
+async function launchGame(appId) {
+  const game = state.games.find(g => g.appid === appId);
+  const name = game ? game.name : `App ID ${appId}`;
+  const isInstalled = game ? game.isInstalled : false;
+  
+  if (isInstalled) {
+    showToast(`Launching ${name}...`, 'success');
+  } else {
+    showToast(`Opening Steam installer for ${name}...`, 'info');
+  }
+  
+  try {
+    // Attempt local backend execution (bypasses browser prompt)
+    const res = await fetch('/api/launch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ appId })
+    });
+    const data = await res.json();
+    
+    if (data.error) {
+      // Backend launch failed, fallback to native browser handler
+      window.location.href = isInstalled ? `steam://run/${appId}` : `steam://install/${appId}`;
+      startGameEndMonitor(appId, name);
+    } else {
+      // Minimize (Electron) or show overlay (browser) when game launches
+      startGameEndMonitor(appId, name);
+    }
+  } catch (error) {
+    // API request failed (e.g. offline), fallback to browser handler
+    window.location.href = isInstalled ? `steam://run/${appId}` : `steam://install/${appId}`;
+    startGameEndMonitor(appId, name);
+  }
+}
+
+let gameMonitorInterval = null;
+
+function showGameRunningOverlay(appId, gameName = '') {
+  if (!elements.gameRunningOverlay) return;
+
+  if (elements.gameRunningName) {
+    elements.gameRunningName.textContent = gameName 
+      ? `${gameName} is now running via Steam.` 
+      : 'Your game is now running via Steam.';
+  }
+
+  elements.gameRunningOverlay.classList.remove('hidden');
+
+  // Optional manual return
+  if (elements.btnReturnToLibrary) {
+    elements.btnReturnToLibrary.onclick = () => {
+      hideGameRunningOverlay();
+      renderMainLibrary();
+    };
+  }
+}
+
+function hideGameRunningOverlay() {
+  if (elements.gameRunningOverlay) {
+    elements.gameRunningOverlay.classList.add('hidden');
+  }
+}
+
+function startGameEndMonitor(appId, gameName = '') {
+  if (gameMonitorInterval) {
+    clearInterval(gameMonitorInterval);
+  }
+
+  const isElectron = !!(window.electronAPI && window.electronAPI.minimizeWindow);
+
+  if (isElectron) {
+    window.electronAPI.minimizeWindow();
+  } else {
+    // Browser-friendly experience
+    showGameRunningOverlay(appId, gameName);
+  }
+
+  let seenRunning = false;
+
+  const poll = async () => {
+    try {
+      const res = await fetch(`/api/game-running?appId=${appId}`);
+      const data = await res.json();
+
+      if (data.running) {
+        seenRunning = true;
+        return;
+      }
+
+      // Only restore if we actually saw the game running at least once
+      // This prevents restoring too early while the game is still starting
+      if (seenRunning) {
+        clearInterval(gameMonitorInterval);
+        gameMonitorInterval = null;
+
+        if (isElectron && window.electronAPI && window.electronAPI.restoreWindow) {
+          window.electronAPI.restoreWindow();
+        } else {
+          hideGameRunningOverlay();
+          renderMainLibrary();
+        }
+      }
+    } catch (e) {
+      // ignore transient errors
+    }
+  };
+
+  // Start polling after a short grace period, then check frequently.
+  // This reduces how long we wait after a game actually exits before restoring the UI.
+  setTimeout(() => {
+    gameMonitorInterval = setInterval(poll, 2000);
+    poll();
+  }, 4000);
+
+  // Browser: when user returns to this tab, immediately re-check game status
+  if (!isElectron) {
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && gameMonitorInterval) {
+        poll();
+      }
+    });
+  }
+}
+
+// ----------------------------------------------------
+// UI Render Functions
+// ----------------------------------------------------
+
+function updateSortDirectionButton() {
+  const btn = document.getElementById('btnToggleSortDirection');
+  if (!btn) return;
+  const icon = btn.querySelector('i');
+  if (!icon) return;
+
+  const isAsc = state.sortDirection === 'asc';
+  let iconClass = 'fa-arrow-down-wide-short';
+  
+  if (state.sortBy === 'name') {
+    iconClass = isAsc ? 'fa-arrow-down-a-z' : 'fa-arrow-up-z-a';
+  } else {
+    iconClass = isAsc ? 'fa-arrow-up-short-wide' : 'fa-arrow-down-wide-short';
+  }
+
+  icon.className = `fa-solid ${iconClass}`;
+  btn.title = isAsc ? 'Sort Order: Ascending (Click to reverse)' : 'Sort Order: Descending (Click to reverse)';
+}
+
+function renderDashboard() {
+  updateSortDirectionButton();
+  renderSidebarFolders();
+  renderMainLibrary();
+  updateStats();
+  if (elements.sidecarPanel && !elements.sidecarPanel.classList.contains('closed')) {
+    updateSidecarHeader();
+    renderSidecarFoldersList();
+  }
+
+  // Keep folder dropdown in sync
+  populateFolderDropdown();
+}
+
+function updateStats() {
+  const totalGames = state.games.length;
+  if (!state.isConfigured) {
+    elements.libraryStats.textContent = 'Not configured';
+    return;
+  }
+  
+  const gameAppIds = new Set(state.games.map(g => g.appid));
+  const normalFolders = state.folders.filter(f => !f.filterSpec);
+  const dynamicFolders = state.folders.filter(f => f.filterSpec);
+  const categorizedAppIds = new Set([
+    ...normalFolders.flatMap(f => f.appIds || []),
+    ...dynamicFolders.flatMap(f => f.manualAppIds || [])
+  ].map(Number).filter(id => gameAppIds.has(id)));
+  const categorizedCount = categorizedAppIds.size;
+  const uncategorizedCount = Math.max(0, totalGames - categorizedCount);
+  
+  elements.libraryStats.textContent = `${totalGames} total games | ${categorizedCount} categorized | ${uncategorizedCount} uncategorized`;
+}
+
+// Sidebar folder navigation rendering
+function renderSidebarFolders() {
+  const list = elements.folderNavList;
+  list.innerHTML = '';
+
+  const gamesToUse = getFilteredGames();
+
+  const totalCount = gamesToUse.length;
+  const normalFolders = state.folders.filter(f => !f.filterSpec);
+  const dynamicFolders = state.folders.filter(f => f.filterSpec);
+  const categorizedAppIds = new Set([
+    ...normalFolders.flatMap(f => f.appIds || []),
+    ...dynamicFolders.flatMap(f => f.manualAppIds || [])
+  ].map(Number));
+  const uncategorizedGames = gamesToUse.filter(g => !categorizedAppIds.has(g.appid));
+  const uncategorizedCount = uncategorizedGames.length;
+
+  // 1. "All Games" Navigation Item
+  const allItem = document.createElement('li');
+  allItem.className = `folder-nav-item ${state.activeFolderId === 'all' ? 'active' : ''}`;
+  allItem.innerHTML = `
+    <div class="folder-nav-header" style="padding-left: 28px;">
+      <div class="folder-nav-link">
+        <i class="fa-solid fa-gamepad"></i>
+        <span>All Games</span>
+      </div>
+      <span class="folder-nav-count">${totalCount}</span>
+    </div>
+  `;
+  allItem.querySelector('.folder-nav-header').addEventListener('click', () => selectActiveFolder('all'));
+  list.appendChild(allItem);
+
+  // 2. "Uncategorized" Navigation Item
+  let uncItem = null;
+  if (uncategorizedCount > 0) {
+    uncItem = document.createElement('li');
+    uncItem.className = `folder-nav-item ${state.activeFolderId === 'uncategorized' ? 'active' : ''} ${state.expandedTreeFolders.has('uncategorized') ? 'expanded' : ''}`;
+    uncItem.dataset.folderId = 'uncategorized';
+
+    const uncHeader = document.createElement('div');
+    uncHeader.className = 'folder-nav-header';
+    uncHeader.innerHTML = `
+      <div style="display: flex; align-items: center; flex: 1; overflow: hidden;">
+        <button class="tree-toggle-btn" title="Toggle games list">
+          <i class="fa-solid fa-chevron-right"></i>
+        </button>
+        <div class="folder-nav-link">
+          <i class="fa-solid fa-folder-open"></i>
+          <span>Uncategorized</span>
+        </div>
+      </div>
+      <span class="folder-nav-count">${uncategorizedCount}</span>
+    `;
+
+    uncHeader.addEventListener('click', (e) => {
+      if (!e.target.closest('.tree-toggle-btn')) {
+        selectActiveFolder('uncategorized');
+      }
+    });
+
+    const uncToggleBtn = uncHeader.querySelector('.tree-toggle-btn');
+    uncToggleBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleSidebarFolderTree('uncategorized');
+    });
+
+    uncItem.appendChild(uncHeader);
+    setupSidebarFolderDropTarget(uncHeader, 'uncategorized');
+
+    if (state.expandedTreeFolders.has('uncategorized')) {
+      const subList = document.createElement('ul');
+      subList.className = 'tree-games-list';
+      
+      if (uncategorizedGames.length === 0) {
+        subList.innerHTML = `<li style="font-size: 11px; color: var(--text-muted); font-style: italic; padding: 4px 8px;">No games</li>`;
+      } else {
+        const maxRenderCount = 100;
+        const gamesToRender = uncategorizedGames.slice(0, maxRenderCount);
+        
+        gamesToRender.forEach(game => {
+          const gameItem = document.createElement('li');
+          gameItem.className = `tree-game-item ${state.selectedAppIds.has(game.appid) ? 'selected' : ''}`;
+          gameItem.dataset.appId = game.appid;
+          gameItem.title = game.name;
+          gameItem.draggable = true;
+
+          let iconHtml = `<i class="fa-solid fa-gamepad tree-game-icon-fallback"></i>`;
+          if (game.img_icon_url) {
+            const iconUrl = `https://media.steampowered.com/steamcommunity/public/images/apps/${game.appid}/${game.img_icon_url}.jpg`;
+            iconHtml = `<img class="tree-game-icon" src="${iconUrl}" alt="" onerror="this.outerHTML='<i class=\\'fa-solid fa-gamepad tree-game-icon-fallback\\'></i>'">`;
+          }
+
+          gameItem.innerHTML = `
+            ${iconHtml}
+            <span>${escapeHtml(game.name)}</span>
+          `;
+
+          gameItem.addEventListener('dragstart', (dragEvent) => {
+            handleDragStart(game.appid, dragEvent);
+          });
+          gameItem.addEventListener('dragend', () => {
+            document.querySelectorAll('.game-card, .tree-game-item').forEach(el => el.classList.remove('dragging'));
+          });
+          gameItem.addEventListener('click', (clickEvent) => {
+            clickEvent.stopPropagation();
+            const isCtrl = clickEvent.ctrlKey || clickEvent.metaKey;
+            if (isCtrl && !state.multiSelectMode) {
+              state.multiSelectMode = true;
+              updateMultiSelectButton();
+            }
+            handleGameSelect(game.appid, true, clickEvent);
+          });
+          gameItem.addEventListener('dblclick', (dblEvent) => {
+            dblEvent.stopPropagation();
+            launchGame(game.appid);
+          });
+
+          subList.appendChild(gameItem);
+        });
+
+        if (uncategorizedGames.length > maxRenderCount) {
+          const moreItem = document.createElement('li');
+          moreItem.style.fontSize = '11px';
+          moreItem.style.color = 'var(--text-muted)';
+          moreItem.style.fontStyle = 'italic';
+          moreItem.style.padding = '4px 8px';
+          moreItem.style.listStyle = 'none';
+          moreItem.textContent = `... and ${uncategorizedGames.length - maxRenderCount} more`;
+          subList.appendChild(moreItem);
+        }
+      }
+      uncItem.appendChild(subList);
+    }
+    list.appendChild(uncItem);
+  }
+
+  const visibleFolders = state.folders.filter(folder => {
+    const appIds = folder.appIds || [];
+    const folderGames = gamesToUse.filter(g => appIds.map(Number).includes(Number(g.appid)));
+    return folderGames.length > 0;
+  });
+
+  if (visibleFolders.length > 0) {
+    const divider = document.createElement('div');
+    divider.style.height = '1px';
+    divider.style.backgroundColor = 'var(--border-color)';
+    divider.style.margin = '10px 0';
+    list.appendChild(divider);
+  }
+
+  visibleFolders.forEach(folder => {
+    const appIds = folder.appIds || [];
+    const folderGames = gamesToUse.filter(g => appIds.map(Number).includes(Number(g.appid)));
+    const validCount = folderGames.length;
+    
+    const item = document.createElement('li');
+    item.className = `folder-nav-item ${state.activeFolderId === folder.id ? 'active' : ''} ${state.expandedTreeFolders.has(folder.id) ? 'expanded' : ''}`;
+    item.dataset.folderId = folder.id;
+
+    const isDynamic = folder.filterSpec ? true : false;
+    const folderIconHtml = isDynamic
+      ? `<div style="display: inline-flex; align-items: center; gap: 4px; vertical-align: middle; margin-right: 4px;"><i class="fa-solid fa-folder" style="color: var(--accent-blue);"></i><i class="fa-solid fa-bolt" style="color: #ffaa00; font-size: 11px;" title="Dynamic Collection"></i></div>`
+      : `<i class="fa-solid fa-folder"></i>`;
+
+    const header = document.createElement('div');
+    header.className = 'folder-nav-header';
+    header.innerHTML = `
+      <div style="display: flex; align-items: center; flex: 1; overflow: hidden;">
+        <button class="tree-toggle-btn" title="Toggle games list">
+          <i class="fa-solid fa-chevron-right"></i>
+        </button>
+        <div class="folder-nav-link">
+          ${folderIconHtml}
+          <span>${escapeHtml(folder.name)}</span>
+        </div>
+      </div>
+      <span class="folder-nav-count">${validCount}</span>
+    `;
+
+    header.addEventListener('click', (e) => {
+      if (!e.target.closest('.tree-toggle-btn')) {
+        selectActiveFolder(folder.id);
+      }
+    });
+
+    const toggleBtn = header.querySelector('.tree-toggle-btn');
+    toggleBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleSidebarFolderTree(folder.id);
+    });
+
+    item.appendChild(header);
+    setupSidebarFolderDropTarget(header, folder.id);
+
+    if (state.expandedTreeFolders.has(folder.id)) {
+      const subList = document.createElement('ul');
+      subList.className = 'tree-games-list';
+      
+      folderGames.forEach(game => {
+        const gameItem = document.createElement('li');
+        gameItem.className = `tree-game-item ${state.selectedAppIds.has(game.appid) ? 'selected' : ''}`;
+        gameItem.dataset.appId = game.appid;
+        gameItem.title = game.name;
+        gameItem.draggable = true;
+
+        let iconHtml = `<i class="fa-solid fa-gamepad tree-game-icon-fallback"></i>`;
+        if (game.img_icon_url) {
+          const iconUrl = `https://media.steampowered.com/steamcommunity/public/images/apps/${game.appid}/${game.img_icon_url}.jpg`;
+          iconHtml = `<img class="tree-game-icon" src="${iconUrl}" alt="" onerror="this.outerHTML='<i class=\\'fa-solid fa-gamepad tree-game-icon-fallback\\'></i>'">`;
+        }
+
+        gameItem.innerHTML = `
+          ${iconHtml}
+          <span>${escapeHtml(game.name)}</span>
+        `;
+
+        gameItem.addEventListener('dragstart', (dragEvent) => {
+          handleDragStart(game.appid, dragEvent);
+        });
+        gameItem.addEventListener('dragend', () => {
+          document.querySelectorAll('.game-card, .tree-game-item').forEach(el => el.classList.remove('dragging'));
+        });
+        gameItem.addEventListener('click', (clickEvent) => {
+          clickEvent.stopPropagation();
+          handleGameSelect(game.appid, true, clickEvent);
+        });
+        gameItem.addEventListener('dblclick', (dblEvent) => {
+          dblEvent.stopPropagation();
+          launchGame(game.appid);
+        });
+
+        subList.appendChild(gameItem);
+      });
+      item.appendChild(subList);
+    }
+    list.appendChild(item);
+  });
+}
+
+// Helper: group games based on active criterion
+function getGroupedGames(games, criterion) {
+  const groups = {};
+  
+  if (criterion === 'genre') {
+    games.forEach(game => {
+      const genres = game.genres && game.genres.length > 0 ? game.genres : ['Unspecified Genre'];
+      genres.forEach(genre => {
+        if (!groups[genre]) {
+          groups[genre] = { name: genre, games: [] };
+        }
+        groups[genre].games.push(game);
+      });
+    });
+  } else if (criterion === 'playstate') {
+    groups['Played'] = { name: 'Played', games: [] };
+    groups['Unplayed'] = { name: 'Unplayed', games: [] };
+    games.forEach(game => {
+      if (game.playtime_forever > 0) {
+        groups['Played'].games.push(game);
+      } else {
+        groups['Unplayed'].games.push(game);
+      }
+    });
+  } else if (criterion === 'metacritic') {
+    groups['90-100'] = { name: 'Outstanding (90-100)', games: [] };
+    groups['80-89'] = { name: 'Very Good (80-89)', games: [] };
+    groups['70-79'] = { name: 'Good (70-79)', games: [] };
+    groups['60-69'] = { name: 'Above Average (60-69)', games: [] };
+    groups['50-59'] = { name: 'Mixed / Average (50-59)', games: [] };
+    groups['0-49'] = { name: 'Negative (0-49)', games: [] };
+    groups['none'] = { name: 'No Metacritic Score', games: [] };
+    
+    games.forEach(game => {
+      const score = game.metacriticScore;
+      if (score === null || score === undefined) {
+        groups['none'].games.push(game);
+      } else if (score >= 90) {
+        groups['90-100'].games.push(game);
+      } else if (score >= 80) {
+        groups['80-89'].games.push(game);
+      } else if (score >= 70) {
+        groups['70-79'].games.push(game);
+      } else if (score >= 60) {
+        groups['60-69'].games.push(game);
+      } else if (score >= 50) {
+        groups['50-59'].games.push(game);
+      } else {
+        groups['0-49'].games.push(game);
+      }
+    });
+  } else if (criterion === 'steamrating') {
+    groups['90-100'] = { name: 'Overwhelmingly Positive (90%-100%)', games: [] };
+    groups['80-89'] = { name: 'Very Positive (80%-89%)', games: [] };
+    groups['70-79'] = { name: 'Mostly Positive (70%-79%)', games: [] };
+    groups['60-69'] = { name: 'Mixed (60%-69%)', games: [] };
+    groups['50-59'] = { name: 'Mixed (50%-59%)', games: [] };
+    groups['0-49'] = { name: 'Mostly Negative (0%-49%)', games: [] };
+    groups['none'] = { name: 'No Rating', games: [] };
+    
+    games.forEach(game => {
+      const rating = game.reviewPercentage;
+      if (rating === null || rating === undefined) {
+        groups['none'].games.push(game);
+      } else if (rating >= 90) {
+        groups['90-100'].games.push(game);
+      } else if (rating >= 80) {
+        groups['80-89'].games.push(game);
+      } else if (rating >= 70) {
+        groups['70-79'].games.push(game);
+      } else if (rating >= 60) {
+        groups['60-69'].games.push(game);
+      } else if (rating >= 50) {
+        groups['50-59'].games.push(game);
+      } else {
+        groups['0-49'].games.push(game);
+      }
+    });
+  } else if (criterion === 'controller') {
+    groups['full'] = { name: 'Full Controller Support', games: [] };
+    groups['partial'] = { name: 'Partial Controller Support', games: [] };
+    groups['vr'] = { name: 'VR Required / Supported', games: [] };
+    groups['none'] = { name: 'Keyboard & Mouse', games: [] };
+    
+    games.forEach(game => {
+      if (game.isVRSupported || game.isVROnly) {
+        groups['vr'].games.push(game);
+      } else if (game.controllerSupport === 'full') {
+        groups['full'].games.push(game);
+      } else if (game.controllerSupport === 'partial') {
+        groups['partial'].games.push(game);
+      } else {
+        groups['none'].games.push(game);
+      }
+    });
+  } else if (criterion === 'year') {
+    // Dynamically build year groups from the game data
+    const yearSet = new Set();
+    games.forEach(game => {
+      const year = game.releaseDate ? new Date(game.releaseDate * 1000).getFullYear() : null;
+      yearSet.add(year !== null ? String(year) : 'unknown');
+    });
+    // Sort years descending (newest first), unknown last
+    const sortedYears = Array.from(yearSet)
+      .filter(y => y !== 'unknown')
+      .sort((a, b) => Number(b) - Number(a));
+    if (yearSet.has('unknown')) sortedYears.push('unknown');
+
+    sortedYears.forEach(y => {
+      groups[y] = { name: y === 'unknown' ? 'Unknown Year' : String(y), games: [] };
+    });
+    games.forEach(game => {
+      const year = game.releaseDate ? String(new Date(game.releaseDate * 1000).getFullYear()) : 'unknown';
+      if (groups[year]) groups[year].games.push(game);
+    });
+  } else if (criterion === 'hltb-main') {
+    groups['0-5'] = { name: '0-5 hours', games: [] };
+    groups['5-10'] = { name: '5-10 hours', games: [] };
+    groups['10-20'] = { name: '10-20 hours', games: [] };
+    groups['20-40'] = { name: '20-40 hours', games: [] };
+    groups['40+'] = { name: '40+ hours', games: [] };
+    groups['none'] = { name: 'No HLTB Data', games: [] };
+
+    games.forEach(game => {
+      const hrs = game.hltb && game.hltb.main != null ? game.hltb.main : null;
+      if (hrs === null) {
+        groups['none'].games.push(game);
+      } else if (hrs < 5) {
+        groups['0-5'].games.push(game);
+      } else if (hrs < 10) {
+        groups['5-10'].games.push(game);
+      } else if (hrs < 20) {
+        groups['10-20'].games.push(game);
+      } else if (hrs < 40) {
+        groups['20-40'].games.push(game);
+      } else {
+        groups['40+'].games.push(game);
+      }
+    });
+  }
+
+  // Remove empty groups
+  Object.keys(groups).forEach(key => {
+    if (groups[key].games.length === 0) {
+      delete groups[key];
+    }
+  });
+
+  return groups;
+}
+
+function sortGamesList(arr, sortBy) {
+  let sorted = [...arr];
+  const dir = state.sortDirection || 'asc';
+  if (sortBy === 'metacritic') {
+    sorted.sort((a, b) => {
+      const scoreA = a.metacriticScore || 0;
+      const scoreB = b.metacriticScore || 0;
+      if (scoreA !== scoreB) {
+        return dir === 'desc' ? scoreB - scoreA : scoreA - scoreB;
+      }
+      return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+    });
+  } else if (sortBy === 'reviews') {
+    sorted.sort((a, b) => {
+      const scoreA = a.reviewPercentage || 0;
+      const scoreB = b.reviewPercentage || 0;
+      if (scoreA !== scoreB) {
+        return dir === 'desc' ? scoreB - scoreA : scoreA - scoreB;
+      }
+      return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+    });
+  } else if (sortBy === 'reviewcount') {
+    sorted.sort((a, b) => {
+      const countA = a.reviewCount || 0;
+      const countB = b.reviewCount || 0;
+      if (countA !== countB) {
+        return dir === 'desc' ? countB - countA : countA - countB;
+      }
+      return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+    });
+  } else if (sortBy === 'lastplayed') {
+    sorted.sort((a, b) => {
+      const timeA = a.rtime_last_played || 0;
+      const timeB = b.rtime_last_played || 0;
+      if (timeA !== timeB) {
+        return dir === 'desc' ? timeB - timeA : timeA - timeB;
+      }
+      return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+    });
+  } else if (sortBy === 'playtime') {
+    sorted.sort((a, b) => {
+      const timeA = a.playtime_forever || 0;
+      const timeB = b.playtime_forever || 0;
+      if (timeA !== timeB) {
+        return dir === 'desc' ? timeB - timeA : timeA - timeB;
+      }
+      return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+    });
+  } else if (sortBy === 'hltb-main') {
+    sorted.sort((a, b) => {
+      const hltbA = (a.hltb && a.hltb.main) || 0;
+      const hltbB = (b.hltb && b.hltb.main) || 0;
+      if (hltbA !== hltbB) {
+        return dir === 'desc' ? hltbB - hltbA : hltbA - hltbB;
+      }
+      return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+    });
+  } else if (sortBy === 'dateadded') {
+    sorted.sort((a, b) => {
+      const dateA = a.date_added || a.appid || 0;
+      const dateB = b.date_added || b.appid || 0;
+      if (dateA !== dateB) {
+        return dir === 'desc' ? dateB - dateA : dateA - dateB;
+      }
+      return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+    });
+  } else if (sortBy === 'year') {
+    sorted.sort((a, b) => {
+      const yearA = a.releaseDate ? new Date(a.releaseDate * 1000).getFullYear() : null;
+      const yearB = b.releaseDate ? new Date(b.releaseDate * 1000).getFullYear() : null;
+      // Push nulls to the end regardless of direction
+      if (yearA === null && yearB === null) return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+      if (yearA === null) return 1;
+      if (yearB === null) return -1;
+      if (yearA !== yearB) {
+        return dir === 'desc' ? yearB - yearA : yearA - yearB;
+      }
+      return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+    });
+  } else {
+    sorted.sort((a, b) => {
+      const comp = a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+      return dir === 'asc' ? comp : -comp;
+    });
+  }
+  return sorted;
+}
+
+// Render main games viewport
+function renderMainLibrary() {
+  updateResetButtonVisibility();
+
+  const container = elements.foldersContainer;
+  const scroller = elements.mainView;
+  const scrollToRestore = scroller ? scroller.scrollTop : 0;
+
+  container.innerHTML = '';
+  
+  if (elements.alphabetSidebar) {
+    elements.alphabetSidebar.innerHTML = '';
+  }
+
+  if (state.games.length === 0) {
+    if (scroller) {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => { scroller.scrollTop = scrollToRestore; });
+        });
+      });
+    }
+    return;
+  }
+
+  let gamesToUse = getFilteredGames();
+  const filterSuffix = getFilterTitleSuffix();
+
+  if (gamesToUse.length === 0 && state.games.length > 0) {
+    // The active filters (default Installed + Non-VR or user set) matched nothing.
+    // Fall back to showing all games so the library isn't empty, and inform the user.
+    showToast('Current filters matched no games — showing all.', 'info');
+    if (elements.filterInstalled) setTristateState(elements.filterInstalled, 'all');
+    if (elements.filterVR) setTristateState(elements.filterVR, 'all');
+    updateResetButtonVisibility();
+    gamesToUse = state.games;
+  }
+
+  if (gamesToUse.length === 0) {
+    container.innerHTML = `
+      <div style="text-align: center; padding: 60px; color: var(--text-muted); font-size: 15px; font-style: italic;">
+        No games match the current filters.
+      </div>
+    `;
+    if (scroller) {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => { scroller.scrollTop = scrollToRestore; });
+        });
+      });
+    }
+    return;
+  }
+
+  const normalFolders = state.folders.filter(f => !f.filterSpec);
+  const dynamicFolders = state.folders.filter(f => f.filterSpec);
+  const categorizedAppIds = new Set([
+    ...normalFolders.flatMap(f => f.appIds || []),
+    ...dynamicFolders.flatMap(f => f.manualAppIds || [])
+  ].map(Number));
+  const uncategorizedGames = gamesToUse.filter(g => !categorizedAppIds.has(g.appid));
+
+  // Group By handling
+  if (state.groupBy && state.groupBy !== 'none') {
+    let gamesToGroup = [];
+    let baseTitle = '';
+    if (state.activeFolderId === 'all') {
+      gamesToGroup = [...gamesToUse];
+      baseTitle = 'All Games';
+    } else if (state.activeFolderId === 'uncategorized') {
+      gamesToGroup = [...uncategorizedGames];
+      baseTitle = 'Uncategorized';
+    } else {
+      const folder = state.folders.find(f => f.id === state.activeFolderId);
+      if (folder) {
+        const appIds = folder.appIds || [];
+        gamesToGroup = gamesToUse.filter(g => appIds.map(Number).includes(Number(g.appid)));
+        baseTitle = folder.name;
+      }
+    }
+
+    let groupLabel = state.groupBy.charAt(0).toUpperCase() + state.groupBy.slice(1);
+    if (state.groupBy === 'hltb-main') groupLabel = 'How Long to Beat (Main)';
+    elements.activeViewTitle.textContent = `${baseTitle} (Grouped by ${groupLabel}) ${filterSuffix}`;
+
+    if (state.searchQuery) {
+      gamesToGroup = gamesToGroup.filter(g => 
+        g.name.toLowerCase().includes(state.searchQuery.toLowerCase())
+      );
+    }
+
+    const grouped = getGroupedGames(gamesToGroup, state.groupBy);
+    
+    let groupKeys = Object.keys(grouped);
+    if (state.groupBy === 'genre') {
+      groupKeys.sort((a, b) => a.localeCompare(b));
+    } else if (state.groupBy === 'playstate') {
+      groupKeys = ['Played', 'Unplayed'].filter(k => grouped[k]);
+    } else if (state.groupBy === 'metacritic' || state.groupBy === 'steamrating') {
+      groupKeys = ['90-100', '80-89', '70-79', '60-69', '50-59', '0-49', 'none'].filter(k => grouped[k]);
+    } else if (state.groupBy === 'controller') {
+      groupKeys = ['full', 'partial', 'vr', 'none'].filter(k => grouped[k]);
+    } else if (state.groupBy === 'hltb-main') {
+      groupKeys = ['0-5', '5-10', '10-20', '20-40', '40+', 'none'].filter(k => grouped[k]);
+    }
+
+    if (groupKeys.length === 0) {
+      container.innerHTML = `
+        <div style="text-align: center; padding: 60px; color: var(--text-muted); font-size: 15px; font-style: italic; grid-column: 1 / -1; width: 100%;">
+          No games match the current search or filters.
+        </div>
+      `;
+    } else {
+      groupKeys.forEach(key => {
+        const grp = grouped[key];
+        const tempFolderId = `group-${state.groupBy}-${key}`;
+        renderFolderSection(tempFolderId, grp.name, grp.games, true);
+      });
+    }
+
+    renderAlphabetSidebar(gamesToUse);
+    if (scroller) {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => { scroller.scrollTop = scrollToRestore; });
+        });
+      });
+    }
+    return;
+  }
+
+  if (state.activeFolderId === 'all') {
+    elements.activeViewTitle.textContent = `All ${filterSuffix}`;
+    
+    // Sort and filter all games flatly
+    let sortedGames = [...gamesToUse];
+    if (state.searchQuery) {
+      sortedGames = sortedGames.filter(g => g.name.toLowerCase().includes(state.searchQuery.toLowerCase()));
+    }
+    
+    sortedGames = sortGamesList(sortedGames, state.sortBy);
+
+    if (sortedGames.length === 0) {
+      container.innerHTML = `
+        <div style="text-align: center; padding: 60px; color: var(--text-muted); font-size: 15px; font-style: italic; grid-column: 1 / -1; width: 100%;">
+          No games match the current search or filters.
+        </div>
+      `;
+    } else {
+      const grid = document.createElement('div');
+      grid.className = 'games-grid';
+      sortedGames.forEach(game => {
+        const card = renderGameCard(game);
+        grid.appendChild(card);
+      });
+      container.appendChild(grid);
+    }
+
+  } else if (state.activeFolderId === 'uncategorized') {
+    elements.activeViewTitle.textContent = `Uncategorized ${filterSuffix}`;
+    renderFolderSection('uncategorized', 'Uncategorized', uncategorizedGames, true);
+    
+  } else {
+    // Specific folder view
+    const folder = state.folders.find(f => f.id === state.activeFolderId);
+    if (folder) {
+      elements.activeViewTitle.textContent = `${folder.name} (${filterSuffix})`;
+      const appIds = folder.appIds || [];
+      const folderGames = gamesToUse.filter(g => appIds.map(Number).includes(Number(g.appid)));
+      renderFolderSection(folder.id, folder.name, folderGames, false);
+    } else {
+      // Fallback
+      selectActiveFolder('all');
+    }
+  }
+
+  // Render the floating #-Z alphabet sidebar dynamically
+  renderAlphabetSidebar(gamesToUse);
+
+  if (scroller) {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => { scroller.scrollTop = scrollToRestore; });
+    });
+  }
+
+  // Restore controller focus after re-render if controller was the last input device.
+  // This fixes broken navigation after search, filter, sort, groupBy changes.
+  if (lastInputDevice === 'controller' && (state.controllerFocusArea === 'main' || state.controllerFocusArea === 'filters')) {
+    requestAnimationFrame(() => {
+      if (state.controllerFocusArea === 'main') {
+        state.controllerFocusIndex = getRestoredMainFocusIndex();
+      }
+      updateControllerFocus({ scroll: false });
+    });
+  }
+}
+
+// Render a folder container section (with header and games grid)
+function renderFolderSection(folderId, folderName, folderGames, isUncategorized) {
+  // Apply search query filter if typed
+  let filteredGames = [...folderGames];
+  if (state.searchQuery) {
+    filteredGames = folderGames.filter(g => 
+      g.name.toLowerCase().includes(state.searchQuery.toLowerCase())
+    );
+  }
+
+  // Sort games based on active state.sortBy selection
+  filteredGames = sortGamesList(filteredGames, state.sortBy);
+
+  // If this folder has no matches, don't render it in 'All Games' view
+  if (filteredGames.length === 0 && state.activeFolderId === 'all') {
+    return;
+  }
+
+  const section = document.createElement('section');
+  section.className = `folder-section ${state.collapsedFolders.has(folderId) ? 'collapsed' : ''}`;
+  section.dataset.folderId = folderId;
+  
+  // Make folder a drop target
+  setupDragAndDropTarget(section, folderId);
+
+  // Header content HTML
+  let actionsHtml = '';
+  if (!isUncategorized) {
+    actionsHtml = `
+      <div class="folder-actions">
+        <button class="folder-action-btn edit" title="Rename Folder"><i class="fa-solid fa-edit"></i></button>
+        <button class="folder-action-btn delete" title="Delete Folder"><i class="fa-solid fa-trash"></i></button>
+      </div>
+    `;
+  }
+
+  section.innerHTML = `
+    <div class="folder-header">
+      <div class="folder-title-area">
+        <button class="folder-collapse-btn"><i class="fa-solid fa-chevron-down"></i></button>
+        <div class="folder-title">
+          ${(() => {
+            const folder = state.folders.find(f => f.id === folderId);
+            if (folder && folder.filterSpec) {
+              return `
+                <div style="display: inline-flex; align-items: center; gap: 4px; vertical-align: middle; margin-right: 6px;">
+                  <i class="fa-solid fa-folder" style="color: var(--accent-blue);"></i>
+                  <i class="fa-solid fa-bolt" style="color: #ffaa00; font-size: 13px;" title="Dynamic Collection"></i>
+                </div>
+              `;
+            }
+            return `<i class="fa-solid ${isUncategorized ? 'fa-folder-open' : 'fa-folder'}"></i>`;
+          })()}
+          <span>${escapeHtml(folderName)}</span>
+          <span class="folder-count">${filteredGames.length}</span>
+        </div>
+      </div>
+      ${actionsHtml}
+    </div>
+    <div class="games-grid"></div>
+  `;
+
+  // Bind Header Collapse action
+  const titleArea = section.querySelector('.folder-title-area');
+  titleArea.addEventListener('click', () => {
+    toggleFolderCollapse(folderId, section);
+  });
+
+  // Bind Rename / Delete buttons
+  if (!isUncategorized) {
+    const btnEdit = section.querySelector('.folder-action-btn.edit');
+    const btnDelete = section.querySelector('.folder-action-btn.delete');
+    
+    btnEdit.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openFolderModal(folderId, folderName);
+    });
+
+    btnDelete.addEventListener('click', (e) => {
+      e.stopPropagation();
+      deleteFolder(folderId, folderName);
+    });
+  }
+
+  // Fill Games Grid
+  const grid = section.querySelector('.games-grid');
+  if (filteredGames.length === 0) {
+    grid.innerHTML = `
+      <div style="grid-column: 1 / -1; color: var(--text-muted); font-size: 13px; padding: 20px 0; text-align: center; font-style: italic;">
+        Drag games here to organize them
+      </div>
+    `;
+  } else {
+    filteredGames.forEach(game => {
+      const card = renderGameCard(game);
+      grid.appendChild(card);
+    });
+  }
+
+  elements.foldersContainer.appendChild(section);
+}
+
+// Helper: format large numbers to k/m abbreviations
+function formatReviewCount(count) {
+  if (count >= 1000000) {
+    return (count / 1000000).toFixed(1).replace(/\.0$/, '') + 'm';
+  }
+  if (count >= 1000) {
+    return (count / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
+  }
+  return count.toString();
+}
+
+// Render individual game card
+function renderGameCard(game) {
+  const card = document.createElement('div');
+  const isInstalled = game.isInstalled;
+  card.className = `game-card ${state.selectedAppIds.has(game.appid) ? 'selected' : ''} ${isInstalled ? '' : 'uninstalled'}`;
+  card.draggable = true;
+  card.dataset.appId = game.appid;
+
+  const firstChar = game.name ? game.name.trim().charAt(0).toUpperCase() : '';
+  const letter = (firstChar >= 'A' && firstChar <= 'Z') ? firstChar : '#';
+  card.dataset.letter = letter;
+
+  // Format playtime
+  const playtimeHrs = Math.round(game.playtime_forever / 60);
+  const playtimeStr = playtimeHrs > 0 ? `${playtimeHrs} hrs` : 'Never played';
+
+  // High-res portrait box art
+  const coverUrl = `https://steamcdn-a.akamaihd.net/steam/apps/${game.appid}/library_600x900_2x.jpg`;
+
+  // Dynamically adapt Launch/Install button
+  const launchBtnClass = isInstalled ? 'game-launch-btn' : 'game-launch-btn install';
+  const launchBtnText = isInstalled ? 'Launch' : 'Install';
+  const launchBtnIcon = isInstalled ? 'fa-play' : 'fa-download';
+  const launchBtnTitle = isInstalled ? 'Launch game' : 'Install game';
+
+  // Construct dynamic sorting context badge
+  let badgeHtml = '';
+  if (state.sortBy === 'metacritic' && game.metacriticScore) {
+    const metacriticColor = game.metacriticScore >= 75 ? '#66cc33' : (game.metacriticScore >= 50 ? '#ffcc33' : '#ff3333');
+    badgeHtml = `
+      <div class="game-meta-badge" style="background-color: ${metacriticColor}; color: #0b1119; font-weight: 800; padding: 2px 6px; border-radius: 4px; font-size: 10px; line-height: 1; display: inline-flex; align-items: center; justify-content: center;">
+        MC: ${game.metacriticScore}
+      </div>
+    `;
+  } else if (state.sortBy === 'reviews' && game.reviewPercentage) {
+    badgeHtml = `
+      <div class="game-meta-badge" style="background-color: rgba(102, 192, 244, 0.15); color: var(--accent-blue); padding: 2px 6px; border-radius: 4px; font-size: 10px; border: 1px solid var(--border-color); line-height: 1; display: inline-flex; align-items: center; gap: 4px;">
+        <i class="fa-solid fa-thumbs-up" style="font-size: 8px;"></i> ${game.reviewPercentage}%
+      </div>
+    `;
+  } else if (state.sortBy === 'reviewcount' && game.reviewCount) {
+    const formatted = formatReviewCount(game.reviewCount);
+    badgeHtml = `
+      <div class="game-meta-badge" style="color: var(--text-muted); font-size: 10px; display: inline-flex; align-items: center; gap: 4px;">
+        <i class="fa-solid fa-comments" style="font-size: 9px;"></i> ${formatted} reviews
+      </div>
+    `;
+  } else if (state.sortBy === 'lastplayed') {
+    let lastPlayedStr = 'Never';
+    if (game.rtime_last_played && game.rtime_last_played > 86400) {
+      const date = new Date(game.rtime_last_played * 1000);
+      lastPlayedStr = date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+    }
+    badgeHtml = `
+      <div class="game-meta-badge" style="color: var(--text-muted); font-size: 10px; display: inline-flex; align-items: center; gap: 4px;">
+        <i class="fa-solid fa-calendar-alt" style="font-size: 9px;"></i> ${lastPlayedStr}
+      </div>
+    `;
+  } else if (state.sortBy === 'playtime') {
+    let playtimeStr = 'Never';
+    if (game.playtime_forever && game.playtime_forever > 0) {
+      if (game.playtime_forever < 60) {
+        playtimeStr = `${game.playtime_forever} mins`;
+      } else {
+        const hrs = (game.playtime_forever / 60).toFixed(1);
+        playtimeStr = `${hrs.endsWith('.0') ? hrs.slice(0, -2) : hrs} hrs`;
+      }
+    }
+    badgeHtml = `
+      <div class="game-meta-badge" style="color: var(--text-muted); font-size: 10px; display: inline-flex; align-items: center; gap: 4px;">
+        <i class="fa-solid fa-clock" style="font-size: 9px;"></i> ${playtimeStr}
+      </div>
+    `;
+  } else if (state.sortBy === 'dateadded') {
+    let dateStr = 'Unknown';
+    if (game.date_added) {
+      if (game.date_added > 1000000000000) {
+        const date = new Date(game.date_added);
+        dateStr = date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+      } else {
+        // Estimate release/acquisition year based on appid ranges
+        const appid = game.appid;
+        let estYear = 2026;
+        if (appid < 10000) estYear = 2004;
+        else if (appid < 30000) estYear = 2006;
+        else if (appid < 50000) estYear = 2008;
+        else if (appid < 100000) estYear = 2010;
+        else if (appid < 200000) estYear = 2012;
+        else if (appid < 300000) estYear = 2014;
+        else if (appid < 500000) estYear = 2016;
+        else if (appid < 800000) estYear = 2018;
+        else if (appid < 1200000) estYear = 2020;
+        else if (appid < 1600000) estYear = 2022;
+        else if (appid < 2000000) estYear = 2024;
+        dateStr = `Est. ${estYear}`;
+      }
+    }
+    badgeHtml = `
+      <div class="game-meta-badge" style="color: var(--text-muted); font-size: 10px; display: inline-flex; align-items: center; gap: 4px;">
+        <i class="fa-solid fa-calendar-plus" style="font-size: 9px;"></i> ${dateStr}
+      </div>
+    `;
+  } else if (state.sortBy === 'year') {
+    const yearStr = game.releaseDate ? new Date(game.releaseDate * 1000).getFullYear() : null;
+    badgeHtml = `
+      <div class="game-meta-badge" style="color: var(--text-muted); font-size: 10px; display: inline-flex; align-items: center; gap: 4px;">
+        <i class="fa-solid fa-calendar" style="font-size: 9px;"></i> ${yearStr !== null ? yearStr : '—'}
+      </div>
+    `;
+  }
+
+  let reviewBadgeHtml = '';
+  if (game.reviewPercentage !== null && game.reviewPercentage !== undefined) {
+    const reviewColor = game.reviewPercentage >= 80 ? 'rgba(46, 204, 113, 0.9)' : (game.reviewPercentage >= 50 ? 'rgba(241, 196, 15, 0.9)' : 'rgba(231, 76, 60, 0.9)');
+    reviewBadgeHtml = `
+      <div class="game-review-overlay-badge" style="position: absolute; top: 26px; right: 5px; background: ${reviewColor}; color: #fff; padding: 3px 6px; border-radius: 4px; font-size: 10px; font-weight: 800; box-shadow: 0 2px 6px rgba(0,0,0,0.4); display: flex; align-items: center; gap: 4px; z-index: 2;">
+        <i class="fa-solid fa-thumbs-up" style="font-size: 8px;"></i> ${game.reviewPercentage}%
+      </div>
+    `;
+  }
+
+  let countBadgeHtml = '';
+  if (game.reviewCount === null || game.reviewCount === undefined) {
+    countBadgeHtml = `
+      <div class="game-count-overlay-badge pending" style="position: absolute; top: 8px; right: 5px; background: rgba(15, 23, 35, 0.85); border: 1px solid var(--border-color); color: var(--text-muted); padding: 3px 6px; border-radius: 4px; font-size: 10px; font-weight: 700; box-shadow: 0 2px 6px rgba(0,0,0,0.4); display: flex; align-items: center; gap: 4px; z-index: 2;" title="Fetching review count from Steam...">
+        <i class="fa-solid fa-spinner fa-spin" style="font-size: 8px; color: var(--accent-blue);"></i> ...
+      </div>
+    `;
+  } else if (game.reviewCount > 0) {
+    const formattedCount = formatReviewCount(game.reviewCount);
+    countBadgeHtml = `
+      <div class="game-count-overlay-badge" style="position: absolute; top: 8px; right: 5px; background: rgba(15, 23, 35, 0.85); border: 1px solid var(--border-color); color: var(--text-bright); padding: 3px 6px; border-radius: 4px; font-size: 10px; font-weight: 700; box-shadow: 0 2px 6px rgba(0,0,0,0.4); display: flex; align-items: center; gap: 4px; z-index: 2;" title="${game.reviewCount.toLocaleString()} total reviews">
+        <i class="fa-solid fa-comments" style="font-size: 8px; color: var(--text-muted);"></i> ${formattedCount}
+      </div>
+    `;
+  }
+
+  let mcBadgeHtml = '';
+  if (game.metacriticScore) {
+    const mcColor = game.metacriticScore >= 75 ? '#66cc33' : (game.metacriticScore >= 50 ? '#ffcc33' : '#ff3333');
+    mcBadgeHtml = `
+      <div class="game-metacritic-overlay-badge" style="position: absolute; top: 44px; right: 5px; background: rgba(15, 23, 35, 0.85); border: 1px solid var(--border-color); color: var(--text-bright); padding: 3px 6px; border-radius: 4px; font-size: 10px; font-weight: 800; box-shadow: 0 2px 6px rgba(0,0,0,0.4); display: flex; align-items: center; gap: 4px; z-index: 2;" title="Metacritic Score: ${game.metacriticScore}">
+        <span style="color: ${mcColor}; font-weight: 900;">MC</span> ${game.metacriticScore}
+      </div>
+    `;
+  }
+
+  let yearBadgeHtml = '';
+  if (game.releaseDate && game.releaseDate > 0) {
+    const releaseYear = new Date(game.releaseDate * 1000).getFullYear();
+    yearBadgeHtml = `
+      <div class="game-year-overlay-badge" style="position: absolute; top: 8px; left: 5px; background: rgba(15, 23, 35, 0.85); border: 1px solid var(--border-color); color: var(--text-muted); padding: 3px 7px; border-radius: 4px; font-size: 10px; font-weight: 700; box-shadow: 0 2px 6px rgba(0,0,0,0.4); display: flex; align-items: center; gap: 4px; z-index: 2; white-space: nowrap;" title="Release Year: ${releaseYear}">
+        <i class="fa-solid fa-calendar" style="font-size: 8px; color: var(--accent-blue);"></i> ${releaseYear}
+      </div>
+    `;
+  }
+
+  let playtimeBadgeHtml = '';
+  if (game.playtime_forever && game.playtime_forever > 0) {
+    let playtimeStr = '';
+    if (game.playtime_forever < 60) {
+      playtimeStr = `${game.playtime_forever}m`;
+    } else {
+      const hrs = (game.playtime_forever / 60).toFixed(1);
+      playtimeStr = `${hrs.endsWith('.0') ? hrs.slice(0, -2) : hrs}h`;
+    }
+    playtimeBadgeHtml = `
+      <div class="game-playtime-overlay-badge" style="position: absolute; bottom: 8px; left: 5px; background: rgba(15, 23, 35, 0.85); border: 1px solid var(--border-color); color: var(--text-bright); padding: 3px 6px; border-radius: 4px; font-size: 10px; font-weight: 700; box-shadow: 0 2px 6px rgba(0,0,0,0.4); display: flex; align-items: center; gap: 4px; z-index: 2;" title="Hours Played: ${playtimeStr}">
+        <i class="fa-solid fa-clock" style="font-size: 8px; color: var(--accent-blue);"></i> ${playtimeStr}
+      </div>
+    `;
+  }
+
+  // HLTB Main badge - bottom right (where metacritic was)
+  let hltbBadgeHtml = '';
+  if (game.hltb && game.hltb.main != null) {
+    const mainHrs = game.hltb.main;
+    hltbBadgeHtml = `
+      <div class="game-hltb-overlay-badge" style="position: absolute; bottom: 8px; right: 5px; background: rgba(15, 23, 35, 0.92); border: 1px solid #5a9; color: #8f8; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 700; box-shadow: 0 2px 6px rgba(0,0,0,0.5); display: flex; align-items: center; gap: 4px; z-index: 3; white-space: nowrap;" title="How Long to Beat - Main Story: ${mainHrs} hours">
+        <i class="fa-solid fa-gamepad" style="font-size: 8px; color: #8f8;"></i> ${mainHrs}h
+      </div>
+    `;
+  }
+
+  let genreBadgeHtml = '';
+  if (game.genres && Array.isArray(game.genres) && game.genres.length > 0) {
+    const g = game.genres[0].trim();
+    if (g) {
+      genreBadgeHtml = `<div class="game-genre-vert" title="${escapeHtml(g)}">${escapeHtml(g)}</div>`;
+    }
+  }
+
+  card.innerHTML = `
+    <div class="game-art-wrapper">
+      <img 
+        src="${coverUrl}" 
+        alt="${escapeHtml(game.name)}" 
+        class="game-art" 
+        loading="lazy"
+        data-fallback-level="1"
+      >
+      ${countBadgeHtml}
+      ${reviewBadgeHtml}
+      ${yearBadgeHtml}
+      ${playtimeBadgeHtml}
+      ${mcBadgeHtml}
+      ${hltbBadgeHtml}
+      ${genreBadgeHtml}
+    </div>
+    <div class="game-overlay">
+      <div class="game-title" title="${escapeHtml(game.name)}">${escapeHtml(game.name)}</div>
+      <div class="game-stats" style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <i class="fa-solid fa-clock"></i>
+          <span>${playtimeStr}</span>
+        </div>
+        ${badgeHtml}
+      </div>
+      <div class="game-actions-row">
+        <button class="${launchBtnClass}" title="${launchBtnTitle}"><i class="fa-solid ${launchBtnIcon}"></i> ${launchBtnText}</button>
+        ${isInstalled ? `<button class="game-uninstall-btn" title="Uninstall game"><i class="fa-solid fa-trash-can"></i></button>` : ''}
+        <button class="game-quick-move-btn" title="Quick Move"><i class="fa-solid fa-angles-right"></i></button>
+        <button class="game-menu-btn" title="Game Details"><i class="fa-solid fa-ellipsis-v"></i></button>
+      </div>
+    </div>
+  `;
+
+  // Optimize badges for list view: gather ALL badges (overlay + sort meta) and center them next to each other
+  if (state.viewMode === 'list') {
+    const wrapper = card.querySelector('.game-art-wrapper');
+    const stats = card.querySelector('.game-stats');
+    const overlay = card.querySelector('.game-overlay');
+    if (wrapper && stats) {
+      // Collect overlay badges that were positioned in corners originally
+      const overlayBadges = Array.from(wrapper.querySelectorAll(
+        '.game-review-overlay-badge, .game-count-overlay-badge, .game-year-overlay-badge, .game-playtime-overlay-badge, .game-metacritic-overlay-badge, .game-hltb-overlay-badge'
+      ));
+      // Also collect any sort-driven badges inside stats
+      const metaBadges = Array.from(stats.querySelectorAll('.game-meta-badge'));
+
+      const allBadges = [...overlayBadges, ...metaBadges];
+      if (allBadges.length > 0) {
+        // Create (or reuse) a centered flex container for them
+        let centerDiv = stats.querySelector('.list-badges-center');
+        if (!centerDiv) {
+          centerDiv = document.createElement('div');
+          centerDiv.className = 'list-badges-center';
+          centerDiv.style.cssText = 'display:flex; align-items:center; justify-content:center; gap:6px; margin:0 8px; flex: 0 0 auto;';
+        } else {
+          centerDiv.innerHTML = ''; // refresh
+        }
+
+        allBadges.forEach(badge => {
+          badge.style.position = 'static';
+          badge.style.top = badge.style.bottom = badge.style.left = badge.style.right = badge.style.transform = 'none';
+          badge.style.margin = '0 4px';
+          badge.style.flex = 'none';
+          centerDiv.appendChild(badge);
+        });
+
+        // Place the centered badges group in the stats area (between playtime info and actions)
+        // Make stats itself flex to allow centering behavior in list layout
+        stats.style.display = 'flex';
+        stats.style.alignItems = 'center';
+        stats.style.justifyContent = 'flex-start';
+
+        // Insert after the first child (playtime) if possible, else append
+        const first = stats.firstElementChild;
+        if (first && centerDiv.parentNode !== stats) {
+          if (first.nextSibling) {
+            stats.insertBefore(centerDiv, first.nextSibling);
+          } else {
+            stats.appendChild(centerDiv);
+          }
+        } else if (centerDiv.parentNode !== stats) {
+          stats.appendChild(centerDiv);
+        }
+      }
+    }
+  }
+
+  // Bind image error fallbacks
+  const img = card.querySelector('.game-art');
+  img.addEventListener('error', () => {
+    handleImageError(img, game.appid, game.name);
+  });
+
+  // Bind click selection
+  card.addEventListener('click', (e) => {
+    if (!e.target.closest('.game-launch-btn') && !e.target.closest('.game-uninstall-btn') && !e.target.closest('.game-quick-move-btn') && !e.target.closest('.game-menu-btn')) {
+      const isCtrl = e.ctrlKey || e.metaKey;
+      if (isCtrl || state.multiSelectMode) {
+        if (isCtrl) {
+          const wasOff = !state.multiSelectMode;
+          state.multiSelectMode = true;
+          updateMultiSelectButton();
+          if (wasOff) {
+            showToast('Multi-select mode enabled (Ctrl+click or button to toggle)', 'info');
+          }
+        }
+        handleGameSelect(game.appid, false, e);
+      } else {
+        // Default single click on cover: open game details modal (same as 3-dots)
+        openGameOptionsModal(game);
+      }
+    }
+  });
+
+  // Bind Launch button
+  const launchBtn = card.querySelector('.game-launch-btn');
+  launchBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    launchGame(game.appid);
+  });
+
+  // Bind Uninstall button
+  if (isInstalled) {
+    const uninstallBtn = card.querySelector('.game-uninstall-btn');
+    uninstallBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      uninstallGame(game.appid, game.name);
+    });
+  }
+
+  // Bind Quick Move button
+  const quickMoveBtn = card.querySelector('.game-quick-move-btn');
+  quickMoveBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openSidecar(game.appid);
+  });
+
+  // Bind Menu options button
+  const menuBtn = card.querySelector('.game-menu-btn');
+  menuBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openGameOptionsModal(game);
+  });
+
+  // Setup Drag Start
+  card.addEventListener('dragstart', (e) => {
+    card.classList.add('dragging');
+    handleDragStart(game.appid, e);
+  });
+
+  card.addEventListener('dragend', () => {
+    document.querySelectorAll('.game-card, .tree-game-item').forEach(el => el.classList.remove('dragging'));
+  });
+
+  return card;
+}
+
+// Elegant image error sequence: 2x vertical -> standard vertical -> horizontal header -> custom visual placeholder
+function handleImageError(img, appId, gameName) {
+  if (img.dataset.fallbackLevel === '1') {
+    // Level 1: try horizontal header
+    img.dataset.fallbackLevel = '2';
+    img.src = `https://cdn.cloudflare.steamstatic.com/steam/apps/${appId}/header.jpg`;
+  } else if (img.dataset.fallbackLevel === '2') {
+    // Level 2: try grid box art without _2x
+    img.dataset.fallbackLevel = '3';
+    img.src = `https://steamcdn-a.akamaihd.net/steam/apps/${appId}/library_600x900.jpg`;
+  } else {
+    // Level 3: replace image with a beautiful CSS box
+    const parent = img.parentElement;
+    if (parent) {
+      parent.innerHTML = `
+        <div class="game-art-fallback">
+          <i class="fa-solid fa-gamepad"></i>
+          <div class="game-art-fallback-title">${escapeHtml(gameName)}</div>
+        </div>
+      `;
+    }
+  }
+}
+
+// Handle folder collapse toggles
+function toggleFolderCollapse(folderId, sectionEl) {
+  if (state.collapsedFolders.has(folderId)) {
+    state.collapsedFolders.delete(folderId);
+    sectionEl.classList.remove('collapsed');
+  } else {
+    state.collapsedFolders.add(folderId);
+    sectionEl.classList.add('collapsed');
+  }
+}
+
+// ----------------------------------------------------
+// Drag and Drop Logic
+// ----------------------------------------------------
+
+function setupDragAndDropTarget(element, targetFolderId) {
+  element.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    element.classList.add('drag-target-active');
+  });
+
+  element.addEventListener('dragleave', () => {
+    element.classList.remove('drag-target-active');
+  });
+
+  element.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    element.classList.remove('drag-target-active');
+    
+    const appIdStr = e.dataTransfer.getData('text/plain');
+    const appId = parseInt(appIdStr, 10);
+    
+    if (isNaN(appId)) return;
+    
+    await moveGameToFolder(appId, targetFolderId);
+  });
+}
+
+// Core move logic
+async function moveGameToFolder(appId, targetFolderId) {
+  const targetAppId = Number(appId);
+  if (targetFolderId === 'uncategorized') {
+    // Remove from all non-dynamic folders
+    // AND remove from all dynamic folders' manual lists
+    state.folders.forEach(f => {
+      if (!f.filterSpec) {
+        f.appIds = (f.appIds || []).filter(id => Number(id) !== targetAppId);
+      } else {
+        f.manualAppIds = (f.manualAppIds || []).filter(id => Number(id) !== targetAppId);
+      }
+    });
+  } else {
+    const targetFolder = state.folders.find(f => String(f.id) === String(targetFolderId));
+    if (targetFolder) {
+      const isDynamic = !!targetFolder.filterSpec;
+      if (isDynamic) {
+        // Dynamic folders always enforce exclusion from normal folders (regardless of multi-folder setting)
+        state.folders.forEach(f => {
+          if (!f.filterSpec) {
+            f.appIds = (f.appIds || []).filter(id => Number(id) !== targetAppId);
+          }
+        });
+        // Add to dynamic folder's manual list
+        if (!targetFolder.manualAppIds) {
+          targetFolder.manualAppIds = [];
+        }
+        if (!targetFolder.manualAppIds.map(Number).includes(targetAppId)) {
+          targetFolder.manualAppIds.push(targetAppId);
+        }
+      } else {
+        if (!state.allowMultiFolderMembership) {
+          // Single-folder mode: remove from all OTHER normal folders before adding to target
+          state.folders.forEach(f => {
+            if (!f.filterSpec && f.id !== targetFolderId) {
+              f.appIds = (f.appIds || []).filter(id => Number(id) !== targetAppId);
+            }
+          });
+          // Also remove from dynamic folders' manual lists
+          state.folders.forEach(f => {
+            if (f.filterSpec) {
+              f.manualAppIds = (f.manualAppIds || []).filter(id => Number(id) !== targetAppId);
+            }
+          });
+        }
+        // Multi-folder mode: just add to target without removing from others
+      }
+      if (!targetFolder.appIds) {
+        targetFolder.appIds = [];
+      }
+      if (!targetFolder.appIds.map(Number).includes(targetAppId)) {
+        targetFolder.appIds.push(targetAppId);
+      }
+    }
+  }
+
+  // Save mapping to backend & re-render
+  await saveFolders();
+  renderDashboard();
+
+  // Clear any moved items that are no longer visible from the selection context
+  const visibleAppIds = getVisibleGamesList().map(g => g.appid);
+  for (const selectedId of state.selectedAppIds) {
+    if (!visibleAppIds.includes(selectedId)) {
+      state.selectedAppIds.delete(selectedId);
+    }
+  }
+  if (state.lastSelectedAppId !== null && !visibleAppIds.includes(state.lastSelectedAppId)) {
+    state.lastSelectedAppId = null;
+  }
+  updateSelectionUI();
+}
+
+// Helpers for multi-folder membership in game details
+function getCurrentFolderIdsForGame(appId) {
+  const numId = Number(appId);
+  const ids = [];
+  (state.folders || []).forEach(folder => {
+    const list = folder.filterSpec ? (folder.manualAppIds || []) : (folder.appIds || []);
+    if (list.map(Number).includes(numId)) {
+      ids.push(folder.id);
+    }
+  });
+  return ids;
+}
+
+async function setGameFolders(appId, folderIdList) {
+  const targetAppId = Number(appId);
+  let selected = (folderIdList || []).filter(Boolean);
+  const treatAsUncategorized = selected.includes('uncategorized') || selected.length === 0;
+
+  if (treatAsUncategorized) {
+    state.folders.forEach(f => {
+      if (f.filterSpec) {
+        f.manualAppIds = (f.manualAppIds || []).filter(id => Number(id) !== targetAppId);
+      } else {
+        f.appIds = (f.appIds || []).filter(id => Number(id) !== targetAppId);
+      }
+    });
+  } else {
+    // Remove from folders not selected
+    state.folders.forEach(f => {
+      const shouldBeIn = selected.includes(String(f.id));
+      if (!shouldBeIn) {
+        if (f.filterSpec) {
+          f.manualAppIds = (f.manualAppIds || []).filter(id => Number(id) !== targetAppId);
+        } else {
+          f.appIds = (f.appIds || []).filter(id => Number(id) !== targetAppId);
+        }
+      }
+    });
+    // Add to selected
+    selected.forEach(fid => {
+      const f = state.folders.find(ff => String(ff.id) === String(fid));
+      if (!f) return;
+      if (f.filterSpec) {
+        if (!f.manualAppIds) f.manualAppIds = [];
+        if (!f.manualAppIds.map(Number).includes(targetAppId)) {
+          f.manualAppIds.push(targetAppId);
+        }
+      } else {
+        if (!f.appIds) f.appIds = [];
+        if (!f.appIds.map(Number).includes(targetAppId)) {
+          f.appIds.push(targetAppId);
+        }
+      }
+    });
+  }
+
+  await saveFolders();
+  renderDashboard();
+
+  // Clear any moved items that are no longer visible from the selection context
+  const visibleAppIds = getVisibleGamesList().map(g => g.appid);
+  for (const selectedId of state.selectedAppIds) {
+    if (!visibleAppIds.includes(selectedId)) {
+      state.selectedAppIds.delete(selectedId);
+    }
+  }
+  if (state.lastSelectedAppId !== null && !visibleAppIds.includes(state.lastSelectedAppId)) {
+    state.lastSelectedAppId = null;
+  }
+  updateSelectionUI();
+}
+
+function createMultiFolderChecklist(game) {
+  const container = document.createElement('div');
+  container.className = 'multi-folder-checklist';
+
+  const currentIds = getCurrentFolderIdsForGame(game.appid);
+  const hasAnyFolder = currentIds.length > 0;
+
+  // Uncategorized
+  const uncWrap = document.createElement('label');
+  const uncInput = document.createElement('input');
+  uncInput.type = 'checkbox';
+  uncInput.value = 'uncategorized';
+  uncInput.checked = !hasAnyFolder;
+  const uncText = document.createElement('span');
+  uncText.textContent = 'Uncategorized';
+  uncWrap.appendChild(uncInput);
+  uncWrap.appendChild(uncText);
+  container.appendChild(uncWrap);
+
+  // Folders (normal + dynamic)
+  const sortedFolders = [...(state.folders || [])].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  sortedFolders.forEach(folder => {
+    const wrap = document.createElement('label');
+    const inp = document.createElement('input');
+    inp.type = 'checkbox';
+    inp.value = folder.id;
+    inp.checked = currentIds.includes(folder.id);
+    const txt = document.createElement('span');
+    txt.textContent = folder.filterSpec ? `⚡ ${folder.name}` : folder.name;
+    wrap.appendChild(inp);
+    wrap.appendChild(txt);
+    container.appendChild(wrap);
+  });
+
+  // Wire up change handlers
+  const allInputs = container.querySelectorAll('input[type="checkbox"]');
+  allInputs.forEach(inp => {
+    inp.addEventListener('change', async () => {
+      let checked = Array.from(container.querySelectorAll('input:checked')).map(c => c.value);
+
+      const uncChk = container.querySelector('input[value="uncategorized"]');
+      const hasNonUnc = checked.some(v => v !== 'uncategorized');
+
+      if (hasNonUnc) {
+        if (uncChk) uncChk.checked = false;
+        checked = checked.filter(v => v !== 'uncategorized');
+      } else if (checked.length === 0) {
+        if (uncChk) uncChk.checked = true;
+        checked = ['uncategorized'];
+      }
+
+      if (activeOptionsGameId) {
+        await setGameFolders(activeOptionsGameId, checked);
+
+        // Re-sync checkboxes from authoritative current state
+        const nowIds = getCurrentFolderIdsForGame(activeOptionsGameId);
+        container.querySelectorAll('input[type="checkbox"]').forEach(c => {
+          c.checked = (c.value === 'uncategorized')
+            ? (nowIds.length === 0)
+            : nowIds.includes(c.value);
+        });
+      }
+    });
+  });
+
+  return container;
+}
+
+// ----------------------------------------------------
+// Folder Management
+// ----------------------------------------------------
+
+// Open folder modal
+function openFolderModal(folderId = null, folderName = '') {
+  editingFolderId = folderId;
+  
+  if (folderId) {
+    elements.folderModalTitle.textContent = 'Rename Folder';
+    elements.inputFolderName.value = folderName;
+    elements.btnSubmitFolder.textContent = 'Rename';
+  } else {
+    elements.folderModalTitle.textContent = 'Create Folder';
+    elements.inputFolderName.value = '';
+    elements.btnSubmitFolder.textContent = 'Create';
+  }
+  
+  elements.folderModal.classList.remove('hidden');
+  elements.inputFolderName.focus();
+  // reset will now prefer the text input and trigger the virtual keyboard focus
+  resetControllerFocusToModal();
+}
+
+function closeFolderModal() {
+  elements.folderModal.classList.add('hidden');
+  editingFolderId = null;
+  pendingSaveViewAppIds = null; // clear if user cancelled a save-view create
+  if (window.electronAPI && window.electronAPI.hideOnScreenKeyboard) {
+    window.electronAPI.hideOnScreenKeyboard();
+  }
+  restoreControllerFocusFromModal({ scroll: false });
+}
+
+// ----------------------------------------------------
+// Controller-friendly Confirmation Dialog (replaces native confirm/alert)
+// ----------------------------------------------------
+
+/**
+ * Show a modal confirmation dialog that supports controller navigation.
+ * Returns a Promise<boolean> (true = confirmed/OK, false = cancelled).
+ */
+async function showConfirmDialog(message, options = {}) {
+  const {
+    title = 'Confirm',
+    confirmText = 'OK',
+    cancelText = 'Cancel',
+    danger = false
+  } = options;
+
+  return new Promise((resolve) => {
+    if (!elements.confirmModal || !elements.confirmModalTitle || !elements.confirmModalMessage) {
+      // Fallback if modal not present (shouldn't happen)
+      resolve(window.confirm ? window.confirm(message) : true);
+      return;
+    }
+
+    elements.confirmModalTitle.textContent = title;
+    // Support newlines in message
+    elements.confirmModalMessage.textContent = message;
+
+    elements.btnConfirmCancel.textContent = cancelText;
+    elements.btnConfirmOk.textContent = confirmText;
+
+    if (danger) {
+      elements.btnConfirmOk.classList.add('btn-danger');
+    } else {
+      elements.btnConfirmOk.classList.remove('btn-danger');
+    }
+
+    elements.confirmModal.classList.remove('hidden');
+
+    confirmResolve = resolve;
+
+    // Let DOM update then focus the primary (confirm) action button for controller
+    requestAnimationFrame(() => {
+      state.controllerFocusArea = 'modal';
+      const els = getModalElements();
+      if (els.length > 0) {
+        // Prefer the last button (usually the affirmative action)
+        state.controllerFocusIndex = els.length - 1;
+      } else {
+        state.controllerFocusIndex = 0;
+      }
+      updateControllerFocus();
+    });
+  });
+}
+
+function closeConfirmDialog(result = false) {
+  if (!elements.confirmModal) return;
+
+  elements.confirmModal.classList.add('hidden');
+  elements.btnConfirmOk.classList.remove('btn-danger');
+
+  const resolver = confirmResolve;
+  confirmResolve = null;
+
+  if (resolver) {
+    resolver(!!result);
+  }
+
+  // After closing, try to restore sensible controller focus.
+  // If another modal is still open underneath (e.g. game details), re-focus it.
+  const stillOpenModal = document.querySelector('.modal-overlay:not(.hidden)');
+  setTimeout(() => {
+    if (stillOpenModal) {
+      resetControllerFocusToModal();
+    } else if (state.controllerFocusArea === 'modal' || state.controllerFocusArea === 'keyboard') {
+      restoreControllerFocusFromModal({ scroll: false });
+    }
+  }, 20);
+}
+
+// Handle folder creation/renaming submission
+async function handleFolderSubmit(e) {
+  e.preventDefault();
+  const name = elements.inputFolderName.value.trim();
+  if (!name) return;
+
+  if (editingFolderId) {
+    // Rename existing
+    const folder = state.folders.find(f => f.id === editingFolderId);
+    if (folder) {
+      folder.name = name;
+      showToast(`Folder renamed to "${name}"`, 'success');
+    }
+  } else {
+    // Create new folder
+    const newId = 'folder_' + Date.now();
+    const newFolderData = {
+      id: newId,
+      name: name,
+      appIds: []
+    };
+    state.folders.push(newFolderData);
+    showToast(`Folder "${name}" created`, 'success');
+
+    // If this create was triggered via sidecar "Save View", assign all visible games to the new folder.
+    if (pendingSaveViewAppIds && pendingSaveViewAppIds.length > 0) {
+      const saveAppIds = pendingSaveViewAppIds.map(Number);
+      pendingSaveViewAppIds = null;
+
+      if (!state.allowMultiFolderMembership) {
+        // Single-folder mode: remove games from all other normal/dynamic folders first so
+        // deduplication on next load doesn't strip them from this new folder.
+        state.folders.forEach(f => {
+          if (!f.filterSpec && f.id !== newId) {
+            f.appIds = (f.appIds || []).filter(id => !saveAppIds.includes(Number(id)));
+          }
+        });
+        state.folders.forEach(f => {
+          if (f.filterSpec) {
+            f.manualAppIds = (f.manualAppIds || []).filter(id => !saveAppIds.includes(Number(id)));
+          }
+        });
+      }
+      // Multi-folder mode: just add to the new folder without touching other folders.
+
+      newFolderData.appIds = saveAppIds;
+
+      // To protect the save-view folder in single-membership mode, move it to the front of the folders array.
+      // This ensures deduplication on load (and after refresh) assigns the games to this folder.
+      if (!state.allowMultiFolderMembership) {
+        const idx = state.folders.indexOf(newFolderData);
+        if (idx > 0) {
+          state.folders.splice(idx, 1);
+          state.folders.unshift(newFolderData);
+        }
+      }
+
+      showToast(`Saved current view as "${name}" (${newFolderData.appIds.length} games)`, 'success');
+    }
+  }
+
+  closeFolderModal();
+  await saveFolders();
+  renderDashboard();
+}
+
+// Delete a folder
+async function deleteFolder(folderId, folderName) {
+  const confirmed = await showConfirmDialog(
+    `Are you sure you want to delete the folder "${folderName}"?\nAll games inside will be moved back to Uncategorized.`,
+    { title: 'Delete Folder', confirmText: 'Delete', cancelText: 'Cancel', danger: true }
+  );
+  if (!confirmed) return;
+
+  state.folders = state.folders.filter(f => f.id !== folderId);
+  state.collapsedFolders.delete(folderId);
+  
+  if (state.activeFolderId === folderId) {
+    state.activeFolderId = 'all';
+  }
+
+  showToast(`Deleted folder "${folderName}"`, 'success');
+  await saveFolders();
+  renderDashboard();
+}
+
+// Select active view in sidebar
+function selectActiveFolder(folderId) {
+  state.activeFolderId = folderId;
+  state.selectedAppIds.clear();
+  state.lastSelectedAppId = null;
+  // Force top of grid for new folder view
+  if (elements.mainView) {
+    elements.mainView.scrollTop = 0;
+  }
+  renderDashboard();
+  // Sync folder dropdown
+  populateFolderDropdown();
+}
+
+// Populate folder dropdown (to the right of search)
+function populateFolderDropdown() {
+  if (!elements.folderDropdown) return;
+  const select = elements.folderDropdown;
+
+  select.innerHTML = '';
+
+  // All Games
+  let opt = document.createElement('option');
+  opt.value = 'all';
+  opt.textContent = 'All Games';
+  select.appendChild(opt);
+
+  // Uncategorized
+  opt = document.createElement('option');
+  opt.value = 'uncategorized';
+  opt.textContent = 'Uncategorized';
+  select.appendChild(opt);
+
+  // User folders, alphabetical by name
+  const userFolders = (state.folders || [])
+    .slice()
+    .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  userFolders.forEach(folder => {
+    opt = document.createElement('option');
+    opt.value = folder.id;
+    let label = folder.name || 'Unnamed';
+    if (folder.filterSpec) label += ' ⚡';
+    opt.textContent = label;
+    select.appendChild(opt);
+  });
+
+  // Set to current active
+  const current = state.activeFolderId || 'all';
+  if (Array.from(select.options).some(o => o.value === current)) {
+    select.value = current;
+  } else {
+    select.value = 'all';
+  }
+}
+
+// ----------------------------------------------------
+// Game Options & Move Dropdown Fallback
+// ----------------------------------------------------
+
+function openGameOptionsModal(game) {
+  activeOptionsGameId = game.appid;
+  currentMediaGameId = game.appid;
+  elements.gameOptionsTitle.textContent = game.name;
+  elements.gameOptionsName.textContent = game.name;
+  
+  // Set image and fallback
+  const imgUrl = `https://steamcdn-a.akamaihd.net/steam/apps/${game.appid}/library_600x900_2x.jpg`;
+  elements.gameOptionsImg.src = imgUrl;
+  elements.gameOptionsImg.dataset.fallbackLevel = '1';
+  elements.gameOptionsImg.onerror = () => {
+    handleImageError(elements.gameOptionsImg, game.appid, game.name);
+  };
+
+  const playtimeHrs = Math.round(game.playtime_forever / 60);
+  const playtimeText = playtimeHrs > 0 ? `${playtimeHrs} hours played` : 'Never played';
+  const ptEl = document.getElementById('previewPlaytime');
+  if (ptEl) ptEl.textContent = playtimeText;
+  // legacy if any
+  if (elements.gameOptionsPlaytime) elements.gameOptionsPlaytime.textContent = playtimeText;
+
+  // Folder management (single-select when multi disabled, multi-checkbox when enabled)
+  const folderGroup = document.querySelector('.select-folder-group');
+  if (folderGroup) {
+    folderGroup.innerHTML = '';
+
+    const labelEl = document.createElement('label');
+    if (state.allowMultiFolderMembership) {
+      labelEl.textContent = 'Folders';
+      folderGroup.appendChild(labelEl);
+
+      const checkList = createMultiFolderChecklist(game);
+      folderGroup.appendChild(checkList);
+    } else {
+      labelEl.setAttribute('for', 'selectFolderMove');
+      labelEl.textContent = 'Move to Folder';
+      folderGroup.appendChild(labelEl);
+
+      const sel = document.createElement('select');
+      sel.id = 'selectFolderMove';
+      sel.className = 'form-select';
+
+      // Find current (single) folder
+      const currentFolder = state.folders.find(f => (f.appIds || []).map(Number).includes(Number(game.appid)));
+      const currentFolderId = currentFolder ? currentFolder.id : 'uncategorized';
+
+      // "Uncategorized" Option
+      const optUnc = document.createElement('option');
+      optUnc.value = 'uncategorized';
+      optUnc.textContent = 'Uncategorized';
+      if (currentFolderId === 'uncategorized') optUnc.selected = true;
+      sel.appendChild(optUnc);
+
+      // User created folders
+      state.folders.forEach(folder => {
+        const opt = document.createElement('option');
+        opt.value = folder.id;
+        opt.textContent = folder.filterSpec ? `⚡ ${folder.name}` : folder.name;
+        if (currentFolderId === folder.id) opt.selected = true;
+        sel.appendChild(opt);
+      });
+
+      folderGroup.appendChild(sel);
+
+      // Attach listener for the freshly created select
+      sel.addEventListener('change', handleFolderMoveSelect);
+      elements.selectFolderMove = sel;
+    }
+  }
+
+  // Adapt launch/install options button
+  const launchBtn = elements.btnLaunchFromOptions;
+  const uninstallBtn = elements.btnUninstallFromOptions;
+  if (game.isInstalled) {
+    launchBtn.innerHTML = '<i class="fa-solid fa-play"></i> Launch';
+    launchBtn.title = 'Launch game';
+    uninstallBtn.classList.remove('hidden');
+  } else {
+    launchBtn.innerHTML = '<i class="fa-solid fa-download"></i> Install';
+    launchBtn.title = 'Install game';
+    uninstallBtn.classList.add('hidden');
+  }
+
+  // Clear previous media
+  if (elements.videosContainer) elements.videosContainer.innerHTML = '';
+  if (elements.screenshotsContainer) elements.screenshotsContainer.innerHTML = '';
+  closeInlineVideo();
+  // Ensure video container has clean video element
+  if (elements.videoPlayerContainer) {
+    resetVideoPlayerUI();
+  }
+
+  elements.gameOptionsModal.classList.remove('hidden');
+  resetControllerFocusToModal();
+
+  // Render basic info immediately (genres/tags from cached game data)
+  // Clear previous full details so only genres/tags show until new load
+  currentGameDetails = { short_description: '', detailed_description: '', developers: [], publishers: [] };
+  renderGameInfo();
+
+  // Asynchronously load screenshots + videos from Steam API via backend
+  loadGameMedia(game.appid);
+}
+
+function closeGameOptionsModal() {
+  // Stop and reset any playing video
+  closeInlineVideo();
+  closeLightbox();
+  
+  elements.gameOptionsModal.classList.add('hidden');
+  activeOptionsGameId = null;
+  currentMediaGameId = null;
+
+  hideVirtualKeyboard();
+  currentScreenshots = [];
+  currentGameDetails = {};
+  // Clear preview info fields
+  const previewIds = ['previewDeveloper', 'previewPublisher', 'previewDescription', 'previewGenres', 'previewTags', 'previewPlaytime'];
+  previewIds.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) {
+      if (el.classList.contains('pills-container')) el.innerHTML = '';
+      else el.textContent = (id === 'previewPlaytime' ? '0 hours played' : '—');
+    }
+  });
+  const hltbEl = document.getElementById('previewHLTB');
+  if (hltbEl) hltbEl.innerHTML = '';
+  restoreControllerFocusFromModal({ scroll: false });
+}
+
+function resetVideoPlayerUI() {
+  if (!elements.videoPlayerContainer) return;
+  elements.videoPlayerContainer.innerHTML = `
+    <video id="detailVideoEl" playsinline></video>
+    <div class="custom-video-controls" id="customVideoControls">
+      <button type="button" class="video-btn" id="btnVideoPlayPause" title="Play/Pause"><i class="fa-solid fa-pause"></i></button>
+      <button type="button" class="video-btn" id="btnVideoRewind" title="Rewind 10s"><i class="fa-solid fa-backward-step"></i></button>
+      <button type="button" class="video-btn" id="btnVideoForward" title="Forward 10s"><i class="fa-solid fa-forward-step"></i></button>
+      <button type="button" class="video-btn" id="btnVideoMute" title="Mute/Unmute"><i class="fa-solid fa-volume-high"></i></button>
+      <button type="button" class="video-btn" id="btnVideoFullscreen" title="Fullscreen"><i class="fa-solid fa-expand"></i></button>
+    </div>
+    <button id="btnCloseVideo" class="btn-close-video" title="Close video"><i class="fa-solid fa-times"></i></button>
+  `;
+  const v = elements.videoPlayerContainer.querySelector('#detailVideoEl');
+  const c = elements.videoPlayerContainer.querySelector('#btnCloseVideo');
+  if (v) elements.detailVideoEl = v;
+  if (c) {
+    elements.btnCloseVideo = c;
+    c.addEventListener('click', closeInlineVideo);
+  }
+  
+  // Bind custom video controls
+  const playBtn = elements.videoPlayerContainer.querySelector('#btnVideoPlayPause');
+  const rewBtn = elements.videoPlayerContainer.querySelector('#btnVideoRewind');
+  const fwdBtn = elements.videoPlayerContainer.querySelector('#btnVideoForward');
+  const muteBtn = elements.videoPlayerContainer.querySelector('#btnVideoMute');
+  const fsBtn = elements.videoPlayerContainer.querySelector('#btnVideoFullscreen');
+  
+  if (playBtn && v) {
+    playBtn.addEventListener('click', () => {
+      if (v.paused) v.play(); else v.pause();
+    });
+    v.addEventListener('play', () => playBtn.innerHTML = '<i class="fa-solid fa-pause"></i>');
+    v.addEventListener('pause', () => playBtn.innerHTML = '<i class="fa-solid fa-play"></i>');
+  }
+  if (rewBtn && v) {
+    rewBtn.addEventListener('click', () => { v.currentTime = Math.max(0, v.currentTime - 10); });
+  }
+  if (fwdBtn && v) {
+    fwdBtn.addEventListener('click', () => { v.currentTime = Math.min(v.duration || 0, v.currentTime + 10); });
+  }
+  if (muteBtn && v) {
+    muteBtn.addEventListener('click', () => {
+      v.muted = !v.muted;
+      muteBtn.innerHTML = v.muted ? '<i class="fa-solid fa-volume-xmark"></i>' : '<i class="fa-solid fa-volume-high"></i>';
+    });
+  }
+  if (fsBtn && v) {
+    fsBtn.addEventListener('click', () => {
+      if (v.requestFullscreen) v.requestFullscreen();
+      else if (v.webkitRequestFullscreen) v.webkitRequestFullscreen();
+    });
+  }
+}
+
+function closeInlineVideo() {
+  const container = elements.videoPlayerContainer;
+
+  // Always destroy active HLS instance first (releases MSE, network, etc)
+  if (currentHlsInstance) {
+    try { currentHlsInstance.destroy(); } catch (e) {}
+    currentHlsInstance = null;
+  }
+
+  if (container) {
+    container.classList.add('hidden');
+    // Restore clean <video> element if we overwrote innerHTML for fallback message
+    if (!container.querySelector('video#detailVideoEl')) {
+      container.innerHTML = `
+        <video id="detailVideoEl" controls playsinline></video>
+        <button id="btnCloseVideo" class="btn-close-video" title="Close video"><i class="fa-solid fa-times"></i></button>
+      `;
+      // rebind close button and update element ref
+      const newVideo = container.querySelector('#detailVideoEl');
+      const newClose = container.querySelector('#btnCloseVideo');
+      if (newVideo) elements.detailVideoEl = newVideo;
+      if (newClose) {
+        elements.btnCloseVideo = newClose;
+        newClose.addEventListener('click', closeInlineVideo);
+      }
+    } else if (elements.detailVideoEl) {
+      try {
+        elements.detailVideoEl.pause();
+        elements.detailVideoEl.removeAttribute('src');
+        elements.detailVideoEl.load(); // fully reset
+      } catch (e) {}
+    }
+  }
+}
+
+// Load and render screenshots/videos for the game details modal (via backend proxy to Steam Store API)
+async function loadGameMedia(appId) {
+  if (!elements.videosContainer || !elements.screenshotsContainer) {
+    console.error('[media] videosContainer or screenshotsContainer not found in DOM');
+    return;
+  }
+
+  // Show loading placeholders
+  elements.videosContainer.innerHTML = `<div style="color:var(--text-muted); font-size:11px; padding:6px 0;">Loading videos from Steam...</div>`;
+  elements.screenshotsContainer.innerHTML = `<div style="color:var(--text-muted); font-size:11px; padding:6px 0;">Loading screenshots from Steam...</div>`;
+
+  try {
+    const res = await fetch(`/api/game/${appId}/media?t=${Date.now()}`);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const media = await res.json();
+
+    currentScreenshots = media.screenshots || [];
+    currentGameDetails = {
+      short_description: media.short_description || '',
+      detailed_description: media.detailed_description || '',
+      developers: media.developers || [],
+      publishers: media.publishers || [],
+    };
+
+    renderVideos(media.movies || [], appId);
+    renderScreenshots(currentScreenshots, appId);
+    renderGameInfo();
+
+    console.log(`[media] Loaded for ${appId}:`, currentScreenshots.length, 'screenshots,', (media.movies || []).length, 'movies');
+
+    // Autoplay the first (preferably highlighted) trailer when opening game details
+    const movies = media.movies || [];
+    if (movies.length > 0 && elements.videoPlayerContainer) {
+      const preferred = movies.find(m => m.highlight) || movies[0];
+      const src = preferred.mp4 || preferred.webm || preferred.stream || ''; // prefer direct progressive, fallback to adaptive HLS
+      elements.videoPlayerContainer.classList.remove('hidden');
+      playVideoInModal(src, preferred.name || 'Trailer', appId, true);
+    }
+  } catch (err) {
+    console.warn('Media load failed for', appId, err);
+    showMediaError(appId);
+    // Still render what we can (genres/tags)
+    renderGameInfo();
+  }
+}
+
+function showMediaError(appId) {
+  if (elements.videosContainer) {
+    elements.videosContainer.innerHTML = `
+      <div style="color:#e67e22; font-size:11px; padding:4px 2px;">
+        Could not load trailers (Steam may be rate-limiting or the title has none).
+        <button class="media-retry-btn" style="margin-left:6px; font-size:10px; padding:1px 6px;">Retry</button>
+      </div>`;
+    const btn = elements.videosContainer.querySelector('.media-retry-btn');
+    if (btn) btn.onclick = () => loadGameMedia(appId);
+  }
+  if (elements.screenshotsContainer) {
+    elements.screenshotsContainer.innerHTML = `
+      <div style="color:#e67e22; font-size:11px; padding:4px 2px;">
+        Could not load screenshots.
+        <button class="media-retry-btn" style="margin-left:6px; font-size:10px; padding:1px 6px;">Retry</button>
+      </div>`;
+    const btn2 = elements.screenshotsContainer.querySelector('.media-retry-btn');
+    if (btn2) btn2.onclick = () => loadGameMedia(appId);
+  }
+  currentScreenshots = [];
+}
+
+function renderVideos(movies, appId) {
+  const container = elements.videosContainer;
+  if (!container) return;
+  container.innerHTML = '';
+
+  if (!movies || movies.length === 0) {
+    container.innerHTML = `
+      <div style="color:var(--text-muted); font-size:11px; padding:4px 2px;">
+        No trailers found for this title.
+        <button class="media-retry-btn" style="margin-left:6px; font-size:10px; padding:1px 6px;">Retry</button>
+      </div>`;
+    const btn = container.querySelector('.media-retry-btn');
+    if (btn) btn.onclick = () => loadGameMedia(appId);
+    return;
+  }
+
+  movies.forEach((movie) => {
+    const thumb = document.createElement('div');
+    thumb.className = 'video-thumb';
+    thumb.title = movie.name || 'Play trailer';
+
+    const directSrc = movie.mp4 || movie.webm || movie.stream || ''; // mp4/webm direct if present (best for <video>), else HLS stream for hls.js
+    const thumbUrl = movie.thumbnail || 'https://cdn.cloudflare.steamstatic.com/steam/apps/0/header.jpg';
+
+    thumb.innerHTML = `
+      <img src="${thumbUrl}" alt="${escapeHtml(movie.name || 'Trailer')}" onerror="this.src='https://cdn.cloudflare.steamstatic.com/steam/apps/0/header.jpg'">
+      <div class="video-play-overlay"><i class="fa-solid fa-play"></i></div>
+      <div class="video-name">${escapeHtml(movie.name || 'Trailer')}</div>
+    `;
+
+    thumb.addEventListener('click', () => {
+      playVideoInModal(directSrc, movie.name, appId);
+    });
+
+    container.appendChild(thumb);
+  });
+}
+
+function renderScreenshots(screenshots, appId) {
+  const container = elements.screenshotsContainer;
+  if (!container) return;
+  container.innerHTML = '';
+
+  const hasOfficial = screenshots && screenshots.length > 0;
+
+  if (!hasOfficial) {
+    // Always provide some reliable artwork so the section is never completely empty
+    const fallbacks = [];
+    if (appId) {
+      fallbacks.push({ full: `https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${appId}/header.jpg`, label: 'Header' });
+      fallbacks.push({ full: `https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${appId}/library_600x900.jpg`, label: 'Library' });
+      fallbacks.push({ full: `https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${appId}/page_bg_raw.jpg`, label: 'Background' });
+    }
+
+    if (fallbacks.length) {
+      container.innerHTML = `<div style="grid-column:1/-1; font-size:10px; color:var(--text-muted); margin-bottom:4px;">Key artwork (no dedicated screenshots published)</div>`;
+      fallbacks.forEach((art, i) => {
+        const img = document.createElement('img');
+        img.className = 'screenshot-thumb';
+        img.src = art.full;
+        img.alt = art.label;
+        img.loading = 'lazy';
+        img.title = art.label;
+        img.style.aspectRatio = '16 / 9';
+        img.addEventListener('click', () => {
+          // open lightbox-like for single image (reuse currentScreenshots or simple new tab)
+          window.open(art.full, '_blank');
+        });
+        container.appendChild(img);
+      });
+    } else {
+      container.innerHTML = `
+        <div style="color:var(--text-muted); font-size:11px; grid-column: 1 / -1; padding:4px 2px;">
+          No screenshots or key art available.
+          <button class="media-retry-btn" style="margin-left:6px; font-size:10px; padding:1px 6px;">Retry</button>
+        </div>`;
+    }
+
+    const btn = container.querySelector('.media-retry-btn');
+    if (btn) btn.onclick = () => loadGameMedia(appId);
+    return;
+  }
+
+  screenshots.forEach((shot, index) => {
+    const img = document.createElement('img');
+    img.className = 'screenshot-thumb';
+    img.src = shot.thumbnail || shot.full;
+    img.alt = `Screenshot ${index + 1}`;
+    img.loading = 'lazy';
+
+    img.addEventListener('click', () => {
+      openLightbox(index);
+    });
+
+    img.onerror = () => {
+      if (shot.full) img.src = shot.full;
+    };
+
+    container.appendChild(img);
+  });
+}
+
+function renderGameInfo() {
+  const details = currentGameDetails || {};
+  const game = state.games.find(g => g.appid === currentMediaGameId) || {};
+
+  // Developer
+  const devEl = document.getElementById('previewDeveloper');
+  if (devEl) {
+    const devs = details.developers && details.developers.length ? details.developers.join(', ') : (game.developers ? game.developers.join(', ') : '—');
+    devEl.textContent = devs;
+  }
+
+  // Publisher
+  const pubEl = document.getElementById('previewPublisher');
+  if (pubEl) {
+    const pubs = details.publishers && details.publishers.length ? details.publishers.join(', ') : (game.publishers ? game.publishers.join(', ') : '—');
+    pubEl.textContent = pubs;
+  }
+
+  // Description (shortened for header)
+  const descEl = document.getElementById('previewDescription');
+  if (descEl) {
+    let desc = details.short_description || details.detailed_description || '';
+    // Basic cleanup
+    desc = desc.replace(/<br\s*\/?>/gi, ' ')
+               .replace(/<[^>]+>/g, '')
+               .replace(/\s+/g, ' ')
+               .trim();
+    if (desc.length > 220) desc = desc.substring(0, 217) + '…';
+    descEl.textContent = desc || 'No description available.';
+  }
+
+  // Genres pills
+  const genresEl = document.getElementById('previewGenres');
+  if (genresEl) {
+    genresEl.innerHTML = '';
+    const genres = game.genres || [];
+    if (genres.length) {
+      genres.forEach(g => {
+        const pill = document.createElement('span');
+        pill.className = 'pill genre';
+        pill.textContent = g;
+        genresEl.appendChild(pill);
+      });
+    } else {
+      const span = document.createElement('span');
+      span.style.color = 'var(--text-muted)';
+      span.style.fontSize = '10px';
+      span.textContent = '—';
+      genresEl.appendChild(span);
+    }
+  }
+
+  // Tags pills - show ALL
+  const tagsEl = document.getElementById('previewTags');
+  if (tagsEl) {
+    tagsEl.innerHTML = '';
+    const tags = game.tags || [];
+    if (tags.length) {
+      tags.forEach(t => {
+        const pill = document.createElement('span');
+        pill.className = 'pill tag';
+        pill.textContent = t;
+        tagsEl.appendChild(pill);
+      });
+    } else {
+      const span = document.createElement('span');
+      span.style.color = 'var(--text-muted)';
+      span.style.fontSize = '10px';
+      span.textContent = '—';
+      tagsEl.appendChild(span);
+    }
+  }
+
+  // HLTB categories - above trailer in details
+  const hltbEl = document.getElementById('previewHLTB');
+  if (hltbEl) {
+    hltbEl.innerHTML = '';
+    const hltb = game.hltb || {};
+    const categories = [
+      { key: 'main', label: 'Main Story', icon: 'fa-clock' },
+      { key: 'mainExtra', label: 'Main + Extras', icon: 'fa-clock-rotate-left' },
+      { key: 'completionist', label: 'Completionist', icon: 'fa-tachometer-alt' }
+    ];
+    let hasAny = false;
+    categories.forEach(cat => {
+      const hrs = hltb[cat.key];
+      if (hrs != null) {
+        hasAny = true;
+        const pill = document.createElement('span');
+        pill.className = 'pill hltb';
+        pill.style.background = 'rgba(90, 150, 90, 0.15)';
+        pill.style.border = '1px solid #5a9';
+        pill.style.color = '#8f8';
+        pill.innerHTML = `<i class="fa-solid ${cat.icon}" style="margin-right:4px;"></i> ${cat.label}: <strong>${hrs}h</strong>`;
+        hltbEl.appendChild(pill);
+      }
+    });
+    if (!hasAny) {
+      const span = document.createElement('span');
+      span.style.color = 'var(--text-muted)';
+      span.style.fontSize = '10px';
+      span.textContent = 'No How Long to Beat data';
+      hltbEl.appendChild(span);
+    }
+  }
+}
+
+function playVideoInModal(videoUrl, title = 'Trailer', fallbackAppId = null, autoMuted = false) {
+  const appId = fallbackAppId || currentMediaGameId || activeOptionsGameId;
+
+  if (!videoUrl || !elements.videoPlayerContainer) {
+    if (appId) return showSteamFallback(appId, title);
+    if (videoUrl) window.open(videoUrl, '_blank');
+    return;
+  }
+
+  // Always clean previous (HLS + video state)
+  closeInlineVideo();
+
+  elements.videoPlayerContainer.classList.remove('hidden');
+
+  // Ensure we have a real <video> element (in case previous fallback replaced DOM)
+  let videoEl = elements.detailVideoEl;
+  if (!videoEl || !videoEl.tagName || videoEl.tagName !== 'VIDEO') {
+    // restore structure
+    resetVideoPlayerUI();
+    videoEl = elements.detailVideoEl;
+  }
+  if (!videoEl) return;
+
+  // Scroll into view
+  setTimeout(() => {
+    elements.videoPlayerContainer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, 40);
+
+  const isLikelyHls = videoUrl.includes('.m3u8') || /hls|adaptive/i.test(videoUrl);
+
+  // --- HLS.js path for adaptive streams (Steam hls_h264) ---
+  if (isLikelyHls && window.Hls && Hls.isSupported()) {
+    try {
+      const hls = new Hls({
+        debug: false,
+        enableWorker: true,
+        // Some Steam manifests work better with these
+        lowLatencyMode: false,
+        backBufferLength: 30
+      });
+      currentHlsInstance = hls;
+
+      hls.loadSource(videoUrl);
+      hls.attachMedia(videoEl);
+
+      hls.on(Hls.Events.MANIFEST_PARSED, function () {
+        if (autoMuted) videoEl.muted = true;
+        const p = videoEl.play();
+        if (p) p.catch(() => {});
+      });
+
+      hls.on(Hls.Events.ERROR, function (event, data) {
+        console.warn('[hls] playback error', data);
+        if (data && data.fatal) {
+          if (currentHlsInstance) {
+            try { currentHlsInstance.destroy(); } catch (e) {}
+            currentHlsInstance = null;
+          }
+          // replace with helpful message
+          showSteamFallback(appId, title, 'Adaptive stream failed to load. ');
+        }
+      });
+
+      // success path - keep the <video>, no fallback UI
+      return;
+    } catch (e) {
+      console.warn('[hls] failed to init hls.js, falling back', e);
+      currentHlsInstance = null;
+      // fall through to native attempt
+    }
+  }
+
+  // --- Native <video> path (mp4/webm, or HLS if browser supports natively) ---
+  videoEl.src = videoUrl;
+  // clear any <source> children
+  videoEl.innerHTML = '';
+
+  if (autoMuted) videoEl.muted = true;
+
+  const playPromise = videoEl.play();
+  if (playPromise) playPromise.catch(() => {});
+
+  // For HLS without hls.js support, give it a moment then show fallback UI instead of broken video
+  if (isLikelyHls) {
+    setTimeout(() => {
+      if (videoEl && (videoEl.paused || videoEl.readyState < 2) && appId) {
+        showSteamFallback(appId, title, 'This environment does not support this adaptive stream natively. ');
+      }
+    }, 1600);
+  }
+}
+
+// Helper to show the "open on Steam" UI (keeps container but replaces inner content)
+function showSteamFallback(appId, title = 'Trailer', extraMsg = '') {
+  const container = elements.videoPlayerContainer;
+  if (!container || !appId) return;
+
+  // clean any hls before replacing DOM
+  if (currentHlsInstance) {
+    try { currentHlsInstance.destroy(); } catch (e) {}
+    currentHlsInstance = null;
+  }
+
+  container.classList.remove('hidden');
+  container.innerHTML = `
+    <div style="padding:14px; color:#ccc; font-size:13px; background:#0a1018; border-radius:4px;">
+      <strong>${escapeHtml(title)}</strong><br>
+      <span style="opacity:.7; font-size:12px;">${extraMsg || ''}Full trailer playback works best on the Steam store.</span>
+      <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;">
+        <button class="btn btn-primary" onclick="window.open('https://store.steampowered.com/app/${appId}', '_blank'); closeInlineVideo();">Open full trailer on Steam</button>
+        <button class="btn-close-video" onclick="closeInlineVideo();">Close</button>
+      </div>
+    </div>
+  `;
+  // re-attach close handler
+  const newClose = container.querySelector('.btn-close-video');
+  if (newClose) newClose.addEventListener('click', closeInlineVideo);
+
+  setTimeout(() => {
+    if (container) container.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, 30);
+}
+
+// Lightbox gallery for screenshots
+function openLightbox(index) {
+  if (!currentScreenshots.length || !elements.mediaLightbox || !elements.lightboxImage) return;
+  currentLightboxIndex = Math.max(0, Math.min(index, currentScreenshots.length - 1));
+  updateLightboxImage();
+  elements.mediaLightbox.classList.remove('hidden');
+
+  // Switch controller focus to the lightbox controls
+  state.controllerFocusArea = 'lightbox';
+  state.controllerFocusIndex = 0;
+  updateControllerFocus();
+}
+
+function updateLightboxImage() {
+  if (!currentScreenshots.length || !elements.lightboxImage) return;
+  const shot = currentScreenshots[currentLightboxIndex];
+  const url = shot.full || shot.thumbnail;
+  elements.lightboxImage.src = url || '';
+  if (elements.lightboxCounter) {
+    elements.lightboxCounter.textContent = `${currentLightboxIndex + 1} / ${currentScreenshots.length}`;
+  }
+}
+
+function navigateLightbox(delta) {
+  if (!currentScreenshots.length) return;
+  currentLightboxIndex = (currentLightboxIndex + delta + currentScreenshots.length) % currentScreenshots.length;
+  updateLightboxImage();
+}
+
+function closeLightbox() {
+  if (elements.mediaLightbox) elements.mediaLightbox.classList.add('hidden');
+  if (elements.lightboxImage) elements.lightboxImage.src = '';
+
+  // Return controller focus to the game details modal
+  if (document.querySelector('.modal-overlay:not(.hidden)')) {
+    state.controllerFocusArea = 'modal';
+    state.controllerFocusIndex = 0;
+    updateControllerFocus();
+  }
+}
+
+// Triggered when folder option dropdown is changed (non-destructive now; allows staying in rich media view)
+async function handleFolderMoveSelect(e) {
+  if (!activeOptionsGameId) return;
+  const targetFolderId = (e && e.target && e.target.value) 
+    ? e.target.value 
+    : (elements.selectFolderMove ? elements.selectFolderMove.value : null);
+  if (!targetFolderId) return;
+
+  await moveGameToFolder(activeOptionsGameId, targetFolderId);
+  showToast('Game moved to selected folder.', 'success');
+  // Note: do NOT auto-close so user can keep browsing screenshots/videos in the details window
+}
+
+// ----------------------------------------------------
+// UI Auxiliaries (Search, Settings Modal, View Mode, Toast)
+// ----------------------------------------------------
+
+function handleSearch() {
+  state.searchQuery = elements.searchBar.value;
+  if (state.searchQuery) {
+    elements.btnClearSearch.classList.remove('hidden');
+  } else {
+    elements.btnClearSearch.classList.add('hidden');
+  }
+  // Reset to top for search results view
+  if (elements.mainView) {
+    elements.mainView.scrollTop = 0;
+  }
+  renderMainLibrary();
+  if (lastInputDevice === 'controller') {
+    state.controllerFocusArea = 'main';
+    state.controllerFocusIndex = getRestoredMainFocusIndex();
+    updateControllerFocus({ scroll: false });
+  }
+}
+
+function clearSearch() {
+  elements.searchBar.value = '';
+  state.searchQuery = '';
+  elements.btnClearSearch.classList.add('hidden');
+  if (elements.mainView) {
+    elements.mainView.scrollTop = 0;
+  }
+  renderMainLibrary();
+  if (lastInputDevice === 'controller') {
+    state.controllerFocusArea = 'main';
+    state.controllerFocusIndex = getRestoredMainFocusIndex();
+    updateControllerFocus({ scroll: false });
+  }
+}
+
+function setViewMode(mode) {
+  state.viewMode = mode;
+  if (mode === 'grid') {
+    elements.viewGrid.classList.add('active');
+    elements.viewList.classList.remove('active');
+    elements.mainView.classList.add('grid-mode');
+    elements.mainView.classList.remove('list-mode');
+  } else {
+    elements.viewGrid.classList.remove('active');
+    elements.viewList.classList.add('active');
+    elements.mainView.classList.remove('grid-mode');
+    elements.mainView.classList.add('list-mode');
+  }
+  // Re-render so that list-view specific DOM adjustments (e.g. centered badges) take effect
+  renderMainLibrary();
+}
+
+function openSettingsModal() {
+  elements.settingsModal.classList.remove('hidden');
+  licenseClearPending = false;
+  resetControllerFocusToModal();
+  loadCacheStatuses();
+}
+
+function closeSettingsModal() {
+  elements.settingsModal.classList.add('hidden');
+  if (window.electronAPI && window.electronAPI.hideOnScreenKeyboard) {
+    window.electronAPI.hideOnScreenKeyboard();
+  }
+  licenseClearPending = false;
+  // Reset fields to saved state if they closed without saving
+  checkConfiguration();
+  restoreControllerFocusFromModal({ scroll: false });
+}
+
+let cacheStatusInterval = null;
+let licenseClearPending = false;
+
+function startCacheStatusPolling() {
+  if (cacheStatusInterval) clearInterval(cacheStatusInterval);
+  loadCacheStatuses(); // immediate
+  cacheStatusInterval = setInterval(async () => {
+    await loadCacheStatuses();
+    // stop if no more running
+    try {
+      const res = await fetch('/api/cache/status');
+      const data = await res.json();
+      const anyRunning = Object.values(data).some(s => s.running);
+      if (!anyRunning) {
+        clearInterval(cacheStatusInterval);
+        cacheStatusInterval = null;
+      }
+    } catch (e) {
+      clearInterval(cacheStatusInterval);
+      cacheStatusInterval = null;
+    }
+  }, 800); // realtime-ish updates
+}
+
+async function loadCacheStatuses() {
+  const container = document.getElementById('cacheList');
+  if (!container) return;
+  try {
+    const res = await fetch('/api/cache/status');
+    const data = await res.json();
+    renderCacheStatuses(data);
+  } catch (e) {
+    container.innerHTML = '<div style="color:#ff6666; font-size:10px;">Failed to load cache status</div>';
+  }
+}
+
+function renderCacheStatuses(statuses) {
+  const container = document.getElementById('cacheList');
+  if (!container) return;
+  container.innerHTML = '';
+  const sections = [
+    { key: 'hltb', label: 'HLTB' },
+    { key: 'license', label: 'License (It is normal to be missing licenses)' },
+    { key: 'media', label: 'Media (Items cached when viewed - only clear if having issues)' },
+    { key: 'metacritic', label: 'Metacritic (MC or HLTB)' },
+    { key: 'reviews', label: 'Reviews' },
+    { key: 'steamratings', label: 'Steam Ratings' },
+    { key: 'tags', label: 'Tags' },
+  ];
+  sections.forEach(sec => {
+    let st = statuses[sec.key] || { processed: 0, total: 0, lastUpdated: null, running: false };
+    if (sec.key === 'license' && licenseClearPending) {
+      st = { ...st, processed: 0, running: false };
+    }
+    const pct = st.total > 0 ? Math.min(100, Math.round((st.processed / st.total) * 100)) : 0;
+    const last = st.lastUpdated ? new Date(st.lastUpdated).toLocaleDateString() + ' ' + new Date(st.lastUpdated).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : 'Never';
+    const div = document.createElement('div');
+    div.style.cssText = 'margin-bottom:6px; border:1px solid var(--border-color); border-radius:3px; padding:3px 4px; background:rgba(0,0,0,0.2);';
+    const btnLabel = (sec.key === 'license' || sec.key === 'media') ? 'Clear' : 'Refresh';
+    let extraMsg = '';
+    if (sec.key === 'license' && licenseClearPending) {
+      extraMsg = `<div style="font-size:9px; color:#ffaa00; margin-top:1px;">will run upon pressing save</div>`;
+    }
+
+    let buttonsHtml;
+    const isStoppable = ['hltb', 'metacritic', 'reviews', 'steamratings'].includes(sec.key);
+    if (sec.key === 'metacritic') {
+      // Two separate buttons specifically for the metacritic cache:
+      // one to check/populate via real Metacritic scrape, one via HLTB review scores.
+      buttonsHtml = `
+        <button class="cache-refresh-btn" data-type="metacritic" style="font-size:9px; padding:1px 3px; border-radius:2px; margin-right:2px;">Check MC</button>
+        <button class="cache-refresh-btn" data-type="metacritic-hltb" style="font-size:9px; padding:1px 3px; border-radius:2px;">Check HLTB</button>
+      `;
+    } else {
+      buttonsHtml = `<button class="cache-refresh-btn" data-type="${sec.key}" style="font-size:9px; padding:1px 4px; border-radius:2px;">${btnLabel}</button>`;
+    }
+
+    // Add Stop button for running stoppable crawlers (HLTB, Metacritic, Steam Reviews, Review Counts)
+    if (sec.key === 'metacritic') {
+      if (st.running) {
+        const stopType = st.runningViaHLTB ? 'metacritic-hltb' : 'metacritic';
+        buttonsHtml += `<button class="cache-stop-btn" data-stop-type="${stopType}" style="font-size:9px; padding:1px 3px; border-radius:2px; background:#c33; color:#fff; margin-left:3px;">Stop</button>`;
+      }
+    } else if (st.running && isStoppable) {
+      const stopType = (sec.key === 'reviews' || sec.key === 'steamratings') ? 'reviews' : sec.key;
+      buttonsHtml += `<button class="cache-stop-btn" data-stop-type="${stopType}" style="font-size:9px; padding:1px 3px; border-radius:2px; background:#c33; color:#fff; margin-left:3px;">Stop</button>`;
+    }
+
+    div.innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <span style="font-weight:600;">${sec.label}</span>
+        <div style="display:flex; align-items:center;">${buttonsHtml}</div>
+      </div>
+      ${extraMsg}
+      <div style="background:#1a2533; height:6px; border-radius:2px; margin:2px 0; overflow:hidden;">
+        <div style="background:var(--accent-blue); height:100%; width:${pct}%; transition:width .3s;"></div>
+      </div>
+      <div style="font-size:9px; color:#888; display:flex; justify-content:space-between;">
+        <span>${st.processed} / ${st.total}</span>
+        <span>${last}${st.running && sec.key !== 'license' ? ' (running)' : ''}</span>
+      </div>
+    `;
+    container.appendChild(div);
+  });
+  // attach refresh listeners
+  container.querySelectorAll('.cache-refresh-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      const type = btn.dataset.type;
+      const orig = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = '...';
+      try {
+        if (type === 'license') {
+          licenseClearPending = true;
+          // force UI update (fetch will get real data but render overrides due to flag)
+          await loadCacheStatuses();
+        } else {
+          const r = await fetch(`/api/cache/refresh/${type}`, { method: 'POST' });
+          const d = await r.json();
+          if (d.message) showToast(d.message, 'info');
+          // Realtime polling while running
+          startCacheStatusPolling();
+        }
+      } catch (err) {
+        showToast('Refresh failed', 'danger');
+      }
+      setTimeout(() => {
+        btn.disabled = false;
+        btn.textContent = orig;
+      }, 800);
+    });
+  });
+
+  // attach stop listeners for HLTB, METACRITIC, STEAM REVIEWS, REVIEW COUNTS
+  container.querySelectorAll('.cache-stop-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      const stopType = btn.dataset.stopType;
+      const orig = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Stopping...';
+      try {
+        const r = await fetch(`/api/cache/stop/${stopType}`, { method: 'POST' });
+        const d = await r.json();
+        if (d.message) showToast(d.message, 'info');
+        // refresh status immediately
+        await loadCacheStatuses();
+      } catch (err) {
+        showToast('Stop failed', 'danger');
+      }
+      setTimeout(() => {
+        btn.disabled = false;
+        btn.textContent = orig;
+      }, 800);
+    });
+  });
+}
+
+// Toast notification helper
+function showToast(message, type = 'success') {
+  const toast = document.createElement('div');
+  toast.className = `toast-notification ${type}`;
+  
+  const icon = type === 'success' ? 'fa-circle-check' : 'fa-circle-exclamation';
+  toast.innerHTML = `
+    <i class="fa-solid ${icon}"></i>
+    <span>${message}</span>
+  `;
+  
+  document.body.appendChild(toast);
+  
+  // Triggers CSS animations
+  setTimeout(() => toast.classList.add('show'), 10);
+  
+  // Destroys toast
+  setTimeout(() => {
+    toast.classList.remove('show');
+    setTimeout(() => toast.remove(), 300);
+  }, 4000);
+}
+
+// Escape HTML utility for security (prevent XSS)
+function escapeHtml(str) {
+  if (typeof str !== 'string') return '';
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+// Get list of visible games in order of main layout display
+function getVisibleGamesList() {
+  const gamesToUse = getFilteredGames();
+  let list = [];
+
+  const sortGames = (arr) => {
+    let sorted = [...arr];
+    if (state.searchQuery) {
+      sorted = sorted.filter(g => g.name.toLowerCase().includes(state.searchQuery.toLowerCase()));
+    }
+    return sortGamesList(sorted, state.sortBy);
+  };
+
+  const normalFolders = state.folders.filter(f => !f.filterSpec);
+  const dynamicFolders = state.folders.filter(f => f.filterSpec);
+  const categorizedAppIds = new Set([
+    ...normalFolders.flatMap(f => f.appIds || []),
+    ...dynamicFolders.flatMap(f => f.manualAppIds || [])
+  ].map(Number));
+  const uncategorizedGames = gamesToUse.filter(g => !categorizedAppIds.has(g.appid));
+
+  if (state.groupBy && state.groupBy !== 'none') {
+    let gamesToGroup = [];
+    if (state.activeFolderId === 'all') {
+      gamesToGroup = [...gamesToUse];
+    } else if (state.activeFolderId === 'uncategorized') {
+      gamesToGroup = [...uncategorizedGames];
+    } else {
+      const folder = state.folders.find(f => f.id === state.activeFolderId);
+      if (folder) {
+        const appIds = folder.appIds || [];
+        gamesToGroup = gamesToUse.filter(g => appIds.map(Number).includes(Number(g.appid)));
+      }
+    }
+
+    let filteredToGroup = [...gamesToGroup];
+    if (state.searchQuery) {
+      filteredToGroup = filteredToGroup.filter(g => 
+        g.name.toLowerCase().includes(state.searchQuery.toLowerCase())
+      );
+    }
+
+    const grouped = getGroupedGames(filteredToGroup, state.groupBy);
+    let groupKeys = Object.keys(grouped);
+    if (state.groupBy === 'genre') {
+      groupKeys.sort((a, b) => a.localeCompare(b));
+    } else if (state.groupBy === 'playstate') {
+      groupKeys = ['Played', 'Unplayed'].filter(k => grouped[k]);
+    } else if (state.groupBy === 'metacritic' || state.groupBy === 'steamrating') {
+      groupKeys = ['90-100', '80-89', '70-79', '60-69', '50-59', '0-49', 'none'].filter(k => grouped[k]);
+    } else if (state.groupBy === 'controller') {
+      groupKeys = ['full', 'partial', 'vr', 'none'].filter(k => grouped[k]);
+    } else if (state.groupBy === 'hltb-main') {
+      groupKeys = ['0-5', '5-10', '10-20', '20-40', '40+', 'none'].filter(k => grouped[k]);
+    }
+
+    groupKeys.forEach(key => {
+      const grp = grouped[key];
+      list.push(...sortGames(grp.games));
+    });
+  } else {
+    if (state.activeFolderId === 'all') {
+      list.push(...sortGames(gamesToUse));
+    } else if (state.activeFolderId === 'uncategorized') {
+      list.push(...sortGames(uncategorizedGames));
+    } else {
+      const folder = state.folders.find(f => f.id === state.activeFolderId);
+      if (folder) {
+        const appIds = folder.appIds || [];
+        const folderGames = gamesToUse.filter(g => appIds.map(Number).includes(Number(g.appid)));
+        list.push(...sortGames(folderGames));
+      }
+    }
+  }
+
+  return list;
+}
+
+// Windows Explorer-like Ctrl/Shift + Click Selection logic
+function handleGameSelect(appId, isTreeItem, e) {
+  const ctrlKey = e.ctrlKey || e.metaKey;
+  const shiftKey = e.shiftKey;
+
+  // Selection list context
+  const visibleGames = getVisibleGamesList();
+  const visibleAppIds = visibleGames.map(g => g.appid);
+
+  if (shiftKey && state.lastSelectedAppId !== null && visibleAppIds.includes(state.lastSelectedAppId) && visibleAppIds.includes(appId)) {
+    const startIdx = visibleAppIds.indexOf(state.lastSelectedAppId);
+    const endIdx = visibleAppIds.indexOf(appId);
+    const minIdx = Math.min(startIdx, endIdx);
+    const maxIdx = Math.max(startIdx, endIdx);
+
+    if (!ctrlKey) {
+      state.selectedAppIds.clear();
+    }
+    for (let i = minIdx; i <= maxIdx; i++) {
+      state.selectedAppIds.add(visibleAppIds[i]);
+    }
+  } else if (ctrlKey) {
+    if (state.selectedAppIds.has(appId)) {
+      state.selectedAppIds.delete(appId);
+    } else {
+      state.selectedAppIds.add(appId);
+    }
+    state.lastSelectedAppId = appId;
+  } else {
+    // This branch is now only reached when explicitly in multi-select mode (or via Ctrl from handle caller)
+    // Normal card clicks now open details modal instead.
+    if (state.selectedAppIds.has(appId)) {
+      state.selectedAppIds.delete(appId);
+    } else {
+      state.selectedAppIds.add(appId);
+    }
+    state.lastSelectedAppId = appId;
+  }
+
+  updateSelectionUI();
+}
+
+// Synchronize selected styles across DOM elements
+function updateSelectionUI() {
+  const cards = document.querySelectorAll('.game-card');
+  cards.forEach(card => {
+    const appId = parseInt(card.dataset.appId, 10);
+    if (state.selectedAppIds.has(appId)) {
+      card.classList.add('selected');
+    } else {
+      card.classList.remove('selected');
+    }
+  });
+
+  const treeItems = document.querySelectorAll('.tree-game-item');
+  treeItems.forEach(item => {
+    const appId = parseInt(item.dataset.appId, 10);
+    if (state.selectedAppIds.has(appId)) {
+      item.classList.add('selected');
+    } else {
+      item.classList.remove('selected');
+    }
+  });
+
+  if (state.selectedAppIds.size > 1) {
+    elements.libraryStats.textContent = `${state.selectedAppIds.size} games selected | ` + elements.libraryStats.textContent.split(' | ').pop();
+  } else {
+    updateStats();
+  }
+
+  // Update sidecar moving list if sidecar is currently open
+  if (elements.sidecarPanel && !elements.sidecarPanel.classList.contains('closed')) {
+    state.sidecarMoveAppIds = Array.from(state.selectedAppIds);
+    updateSidecarHeader();
+  }
+}
+
+function switchControllerPanel(delta) {
+  const areas = ['left', 'main', 'right'];  // left (sidebar), main (grid), right (sidecar) - currently not heavily used for LB/RB which are special cased
+  let currentIdx = areas.indexOf(state.controllerFocusArea);
+  if (currentIdx === -1) currentIdx = 1; // default main
+  let newIdx = (currentIdx + delta + areas.length) % areas.length;
+  state.controllerFocusArea = areas[newIdx];
+  state.controllerFocusIndex = 0;
+
+  // Handle sidecar visibility
+  if (state.controllerFocusArea === 'right') {
+    if (elements.sidecarPanel && elements.sidecarPanel.classList.contains('closed')) {
+      toggleSidecar();
+    }
+  }
+
+  // If left, ensure sidebar open
+  if (state.controllerFocusArea === 'left' && elements.sidebar && elements.sidebar.classList.contains('collapsed')) {
+    // toggle if needed, but let user
+  }
+
+  updateControllerFocus();
+}
+
+function handleLB() {
+  if (state.controllerFocusArea === 'main') {
+    // open left hamburger menu (sidebar) and focus it
+    const sidebar = elements.sidebar;
+    const wasCollapsed = sidebar && sidebar.classList.contains('collapsed');
+    if (wasCollapsed) {
+      // Make the open instant for controller so focus can apply immediately
+      // (avoids transition making rects/visibility 0 during the 0.3s anim)
+      const originalTransition = sidebar.style.transition;
+      sidebar.style.transition = 'none';
+      sidebar.classList.remove('collapsed');
+      // force layout
+      void sidebar.offsetWidth;
+      // restore transition for future interactions
+      sidebar.style.transition = originalTransition || '';
+
+      const toggle = elements.btnToggleSidebar;
+      if (toggle) {
+        const icon = toggle.querySelector('i');
+        if (icon) icon.className = 'fa-solid fa-bars';
+        toggle.title = 'Collapse Sidebar';
+      }
+    }
+
+    state.controllerFocusArea = 'left';
+    state.controllerFocusIndex = 0;
+    updateControllerFocus();
+  } else if (state.controllerFocusArea === 'right') {
+    // from right back to grid - restore last highlighted game (by appId if possible)
+    state.controllerFocusArea = 'main';
+    state.controllerFocusIndex = getRestoredMainFocusIndex();
+    updateControllerFocus();
+  }
+}
+
+function handleRB() {
+  if (state.controllerFocusArea === 'main') {
+    // open right sidecar and focus it
+    if (elements.sidecarPanel && elements.sidecarPanel.classList.contains('closed')) {
+      toggleSidecar();
+    }
+    state.controllerFocusArea = 'right';
+    state.controllerFocusIndex = 0;
+    updateControllerFocus();
+  } else if (state.controllerFocusArea === 'left') {
+    // from left back to grid - restore last highlighted game (by appId if possible)
+    state.controllerFocusArea = 'main';
+    state.controllerFocusIndex = getRestoredMainFocusIndex();
+    updateControllerFocus();
+  }
+}
+
+function updateMultiSelectButton() {
+  if (!elements.btnToggleMultiSelect) return;
+  if (state.multiSelectMode) {
+    elements.btnToggleMultiSelect.classList.add('active');
+    elements.btnToggleMultiSelect.title = 'Multi-Select Mode ON (click to disable)';
+    if (elements.mainView) elements.mainView.classList.add('multi-select-mode');
+  } else {
+    elements.btnToggleMultiSelect.classList.remove('active');
+    elements.btnToggleMultiSelect.title = 'Toggle Multi-Select Mode (Ctrl+Click also enables)';
+    if (elements.mainView) elements.mainView.classList.remove('multi-select-mode');
+  }
+}
+
+// Cleanly exit multi-select mode and unselect all currently selected games
+function exitMultiSelectMode() {
+  state.multiSelectMode = false;
+  state.selectedAppIds.clear();
+  state.lastSelectedAppId = null;
+  updateMultiSelectButton();
+  updateSelectionUI();
+}
+
+function toggleFullscreen() {
+  if (window.electronAPI && window.electronAPI.toggleFullscreen) {
+    window.electronAPI.toggleFullscreen();
+  } else {
+    // fallback for non-Electron or web
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(err => console.warn('Fullscreen failed:', err));
+    } else {
+      document.exitFullscreen().catch(err => console.warn('Exit fullscreen failed:', err));
+    }
+  }
+}
+
+function updateFullscreenIcon() {
+  if (!elements.btnFullscreen) return;
+  const icon = elements.btnFullscreen.querySelector('i');
+  if (!icon) return;
+  if (document.fullscreenElement) {
+    icon.className = 'fa-solid fa-compress';
+    elements.btnFullscreen.title = 'Exit Fullscreen';
+  } else {
+    icon.className = 'fa-solid fa-expand';
+    elements.btnFullscreen.title = 'Toggle Fullscreen';
+  }
+}
+
+// Drag start initialization for single or multiple items
+function handleDragStart(appId, e) {
+  if (!state.selectedAppIds.has(appId)) {
+    state.selectedAppIds.clear();
+    state.selectedAppIds.add(appId);
+    state.lastSelectedAppId = appId;
+    updateSelectionUI();
+  }
+
+  const idsArray = Array.from(state.selectedAppIds);
+  e.dataTransfer.setData('application/json', JSON.stringify(idsArray));
+  e.dataTransfer.setData('text/plain', appId.toString());
+  e.dataTransfer.effectAllowed = 'move';
+}
+
+// Move multiple games to target folder
+async function moveMultipleGamesToFolder(appIds, targetFolderId) {
+  const targetAppIds = appIds.map(Number);
+  if (targetFolderId === 'uncategorized') {
+    // Remove from all non-dynamic folders
+    // AND remove from all dynamic folders' manual lists
+    state.folders.forEach(f => {
+      if (!f.filterSpec) {
+        f.appIds = (f.appIds || []).filter(id => !targetAppIds.includes(Number(id)));
+      } else {
+        f.manualAppIds = (f.manualAppIds || []).filter(id => !targetAppIds.includes(Number(id)));
+      }
+    });
+  } else {
+    const targetFolder = state.folders.find(f => String(f.id) === String(targetFolderId));
+    if (targetFolder) {
+      const isDynamic = !!targetFolder.filterSpec;
+      if (isDynamic) {
+        // Dynamic folders always enforce exclusion from normal folders (regardless of multi-folder setting)
+        state.folders.forEach(f => {
+          if (!f.filterSpec) {
+            f.appIds = (f.appIds || []).filter(id => !targetAppIds.includes(Number(id)));
+          }
+        });
+        // Add to dynamic folder's manual list
+        if (!targetFolder.manualAppIds) {
+          targetFolder.manualAppIds = [];
+        }
+        targetAppIds.forEach(appId => {
+          if (!targetFolder.manualAppIds.map(Number).includes(appId)) {
+            targetFolder.manualAppIds.push(appId);
+          }
+        });
+      } else {
+        if (!state.allowMultiFolderMembership) {
+          // Single-folder mode: remove games from all OTHER normal folders before adding to target
+          state.folders.forEach(f => {
+            if (!f.filterSpec && f.id !== targetFolderId) {
+              f.appIds = (f.appIds || []).filter(id => !targetAppIds.includes(Number(id)));
+            }
+          });
+          // Also remove from dynamic folders' manual lists
+          state.folders.forEach(f => {
+            if (f.filterSpec) {
+              f.manualAppIds = (f.manualAppIds || []).filter(id => !targetAppIds.includes(Number(id)));
+            }
+          });
+        }
+        // Multi-folder mode: just add to target without removing from others
+      }
+      if (!targetFolder.appIds) {
+        targetFolder.appIds = [];
+      }
+      targetAppIds.forEach(appId => {
+        if (!targetFolder.appIds.map(Number).includes(appId)) {
+          targetFolder.appIds.push(appId);
+        }
+      });
+    }
+  }
+
+  await saveFolders();
+  renderDashboard();
+  
+  // Clear any moved items that are no longer visible from the selection context
+  const visibleAppIds = getVisibleGamesList().map(g => g.appid);
+  for (const appId of state.selectedAppIds) {
+    if (!visibleAppIds.includes(appId)) {
+      state.selectedAppIds.delete(appId);
+    }
+  }
+  if (state.lastSelectedAppId !== null && !visibleAppIds.includes(state.lastSelectedAppId)) {
+    state.lastSelectedAppId = null;
+  }
+
+  updateSelectionUI();
+  showToast(`Moved ${appIds.length} game(s) successfully.`, 'success');
+}
+
+// Expand/Collapse sidebar folder node
+function toggleSidebarFolderTree(folderId) {
+  if (state.expandedTreeFolders.has(folderId)) {
+    state.expandedTreeFolders.delete(folderId);
+  } else {
+    state.expandedTreeFolders.add(folderId);
+  }
+  renderSidebarFolders();
+}
+
+// Drag & drop receiver for left side folder links
+function setupSidebarFolderDropTarget(element, targetFolderId) {
+  element.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    element.classList.add('drag-target-active');
+  });
+
+  element.addEventListener('dragleave', () => {
+    element.classList.remove('drag-target-active');
+  });
+
+  element.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    element.classList.remove('drag-target-active');
+    
+    let appIds = [];
+    try {
+      const json = e.dataTransfer.getData('application/json');
+      if (json) appIds = JSON.parse(json);
+    } catch (err) {}
+
+    if (appIds.length === 0) {
+      const idStr = e.dataTransfer.getData('text/plain');
+      const id = parseInt(idStr, 10);
+      if (!isNaN(id)) appIds = [id];
+    }
+
+    if (appIds.length === 0) return;
+
+    await moveMultipleGamesToFolder(appIds, targetFolderId);
+  });
+}
+
+// Toggle Sidecar panel open or closed manually at any time
+function toggleSidecar() {
+  const isClosed = elements.sidecarPanel.classList.contains('closed');
+  if (isClosed) {
+    if (state.selectedAppIds.size > 0) {
+      state.sidecarMoveAppIds = Array.from(state.selectedAppIds);
+    } else {
+      state.sidecarMoveAppIds = [];
+    }
+    updateSidecarHeader();
+    renderSidecarFoldersList();
+    elements.sidecarPanel.classList.remove('closed');
+    if (elements.mainContent) elements.mainContent.classList.add('sidecar-open');
+    resetControllerFocusToModal();
+  } else {
+    closeSidecar(true, false);
+  }
+}
+
+// Update the target prompt header text for the sidecar moving list
+function updateSidecarHeader() {
+  const appIds = state.sidecarMoveAppIds && state.sidecarMoveAppIds.length > 0
+    ? state.sidecarMoveAppIds
+    : Array.from(state.selectedAppIds);
+
+  const count = appIds.length;
+  if (count === 1) {
+    const game = state.games.find(g => g.appid === appIds[0]);
+    elements.sidecarTargetText.innerHTML = `Move <strong>${escapeHtml(game ? game.name : 'this game')}</strong> to:`;
+  } else if (count > 1) {
+    elements.sidecarTargetText.innerHTML = `Move <strong>${count} selected games</strong> to:`;
+  } else {
+    elements.sidecarTargetText.innerHTML = `Select games to move, or click folders to navigate:`;
+  }
+}
+
+// Open Sidecar panel to move games (triggered via game card buttons)
+function openSidecar(appId) {
+  if (state.selectedAppIds.has(appId)) {
+    state.sidecarMoveAppIds = Array.from(state.selectedAppIds);
+  } else {
+    state.sidecarMoveAppIds = [appId];
+  }
+
+  updateSidecarHeader();
+  renderSidecarFoldersList();
+  elements.sidecarPanel.classList.remove('closed');
+  resetControllerFocusToModal();
+}
+
+// Close Sidecar quick move panel
+function closeSidecar(restoreFocus = true, scroll = true) {
+  elements.sidecarPanel.classList.add('closed');
+  if (elements.mainContent) elements.mainContent.classList.remove('sidecar-open');
+  state.sidecarMoveAppIds = [];
+  if (restoreFocus) {
+    resetControllerFocus({ scroll });
+  }
+}
+
+// Handle window resize for responsive behavior (auto-collapse panels, etc.)
+let resizeTimeout = null;
+function handleWindowResize() {
+  clearTimeout(resizeTimeout);
+  resizeTimeout = setTimeout(() => {
+    const w = window.innerWidth;
+    
+    // Auto-collapse sidebar on narrow windows
+    if (w < 850 && elements.sidebar && !elements.sidebar.classList.contains('collapsed')) {
+      elements.sidebar.classList.add('collapsed');
+      if (elements.btnToggleSidebar) {
+        const icon = elements.btnToggleSidebar.querySelector('i');
+        if (icon) icon.className = 'fa-solid fa-angles-right';
+        elements.btnToggleSidebar.title = 'Expand Sidebar';
+      }
+    }
+    
+    // Auto-close sidecar on very narrow to prevent overlap
+    if (w < 700 && elements.sidecarPanel && !elements.sidecarPanel.classList.contains('closed')) {
+      closeSidecar(false, false);
+    }
+    
+    // Optional: re-trigger any layout that needs it (grid is CSS auto, but e.g. for focus)
+  }, 120);
+}
+
+window.addEventListener('resize', handleWindowResize);
+
+// Also listen for orientation or other if needed, but resize covers desktop window drag
+
+
+// Save current filtered view (visible games in main grid) as a new folder
+function saveCurrentViewAsFolder() {
+  const visibleGames = getVisibleGamesList();
+  if (!visibleGames || visibleGames.length === 0) {
+    showToast('No games currently visible to save as a view.', 'info');
+    return;
+  }
+
+  pendingSaveViewAppIds = visibleGames.map(g => g.appid);
+  // Prompt for name using the standard folder create modal (like left + button)
+  openFolderModal();
+}
+
+// Populate folders list inside Sidecar drawer with counts and delete buttons
+function renderSidecarFoldersList() {
+  const list = elements.sidecarFolderList;
+  list.innerHTML = '';
+
+  const totalGames = state.games.length;
+  const normalFolders = state.folders.filter(f => !f.filterSpec);
+  const dynamicFolders = state.folders.filter(f => f.filterSpec);
+  const categorizedAppIds = new Set([
+    ...normalFolders.flatMap(f => f.appIds || []),
+    ...dynamicFolders.flatMap(f => f.manualAppIds || [])
+  ].map(Number));
+  const uncategorizedCount = state.games.filter(g => !categorizedAppIds.has(g.appid)).length;
+
+  // 1. "Uncategorized" Target option
+  const uncItem = document.createElement('li');
+  uncItem.className = 'sidecar-folder-item';
+  uncItem.innerHTML = `
+    <div class="sidecar-folder-link">
+      <i class="fa-solid fa-folder-open"></i>
+      <span>Uncategorized</span>
+    </div>
+    <div class="sidecar-folder-actions">
+      <span class="sidecar-folder-count">${uncategorizedCount}</span>
+    </div>
+  `;
+  uncItem.addEventListener('click', async () => {
+    const appIds = state.sidecarMoveAppIds && state.sidecarMoveAppIds.length > 0
+      ? state.sidecarMoveAppIds
+      : Array.from(state.selectedAppIds);
+
+    if (appIds.length > 0) {
+      closeSidecar(false);
+      await moveMultipleGamesToFolder(appIds, 'uncategorized');
+      // restore to previous grid scroll location (no forced focus scroll)
+      state.controllerFocusArea = 'main';
+      state.controllerFocusIndex = getRestoredMainFocusIndex();
+    } else {
+      selectActiveFolder('uncategorized');
+    }
+  });
+  list.appendChild(uncItem);
+  setupSidebarFolderDropTarget(uncItem, 'uncategorized');
+
+  // 2. User created folders target options
+  state.folders.forEach(folder => {
+    const validCount = (folder.appIds || []).filter(id => state.games.some(g => Number(g.appid) === Number(id))).length;
+
+    const item = document.createElement('li');
+    item.className = 'sidecar-folder-item';
+    
+    const isDynamic = folder.filterSpec ? true : false;
+    const folderIconHtml = isDynamic
+      ? `<div style="display: inline-flex; align-items: center; gap: 4px; vertical-align: middle; margin-right: 4px;"><i class="fa-solid fa-folder" style="color: var(--accent-blue);"></i><i class="fa-solid fa-bolt" style="color: #ffaa00; font-size: 11px;" title="Dynamic Collection"></i></div>`
+      : `<i class="fa-solid fa-folder"></i>`;
+
+    item.innerHTML = `
+      <div class="sidecar-folder-link">
+        ${folderIconHtml}
+        <span>${escapeHtml(folder.name)}</span>
+      </div>
+      <div class="sidecar-folder-actions">
+        <span class="sidecar-folder-count">${validCount}</span>
+        <button class="sidecar-delete-btn" title="Delete Folder"><i class="fa-solid fa-trash-can"></i></button>
+      </div>
+    `;
+    item.addEventListener('click', async () => {
+      const appIds = state.sidecarMoveAppIds && state.sidecarMoveAppIds.length > 0
+        ? state.sidecarMoveAppIds
+        : Array.from(state.selectedAppIds);
+
+      if (appIds.length > 0) {
+        closeSidecar(false);
+        await moveMultipleGamesToFolder(appIds, folder.id);
+        // restore to previous grid scroll location (no forced focus scroll)
+        state.controllerFocusArea = 'main';
+        state.controllerFocusIndex = getRestoredMainFocusIndex();
+      } else {
+        selectActiveFolder(folder.id);
+      }
+    });
+
+    // Handle delete button click in sidecar
+    const deleteBtn = item.querySelector('.sidecar-delete-btn');
+    deleteBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      deleteFolder(folder.id, folder.name);
+    });
+
+    list.appendChild(item);
+    setupSidebarFolderDropTarget(item, folder.id);
+  });
+}
+
+// Dynamically inject Toast Styles into document
+const toastStyle = document.createElement('style');
+toastStyle.textContent = `
+  .toast-notification {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    background-color: var(--bg-panel);
+    border: 1px solid var(--border-color);
+    border-left: 4px solid var(--accent-blue);
+    padding: 12px 20px;
+    border-radius: var(--radius-md);
+    color: var(--text-bright);
+    font-size: 14px;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    box-shadow: var(--shadow-main);
+    transform: translateY(100px);
+    opacity: 0;
+    transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    z-index: 9999;
+  }
+  .toast-notification.show {
+    transform: translateY(0);
+    opacity: 1;
+  }
+  .toast-notification.success {
+    border-left-color: var(--accent-green);
+  }
+  .toast-notification.success i {
+    color: var(--accent-green);
+  }
+  .toast-notification.danger {
+    border-left-color: var(--accent-red);
+  }
+  .toast-notification.danger i {
+    color: var(--accent-red);
+  }
+`;
+document.head.appendChild(toastStyle);
+
+// Gamepad polling loop variables
+let gamepadLoopId = null;
+const prevButtons = {};
+let axisCooldown = 0;
+let aPressStart = 0;
+let lastControllerLT = false;
+let lastMainGridIndex = 0;  // remember last focused game card for returning to grid
+let lastMainGridAppId = null; // better: remember by appid so we can find it after filter/sort changes
+let pendingSaveViewAppIds = null; // For "Save View" from sidecar: appIds to assign on new folder create
+let globalShortcutWasPressed = false;
+let startBackPressStart = 0;
+
+// Virtual keyboard state for controller-controlled in-app OSK
+let lastActiveInput = null;
+let vkShift = false;
+let justClosedKeyboard = false;
+let lastInputDevice = 'mouse'; // 'mouse' | 'controller'  -- VK only for controller, never on mouse clicks
+
+// Start checking gamepad inputs
+function startGamepadLoop() {
+  if (gamepadLoopId) return;
+  
+  // Default focus if none is active
+  if (!document.querySelector('.controller-focused')) {
+    state.controllerFocusArea = 'main';
+    state.controllerFocusIndex = getRestoredMainFocusIndex();
+    updateControllerFocus({ scroll: false });
+  }
+  
+  gamepadLoop();
+}
+
+// Stop gamepad input checking
+function stopGamepadLoop() {
+  if (gamepadLoopId) {
+    clearTimeout(gamepadLoopId);
+    gamepadLoopId = null;
+  }
+  document.querySelectorAll('.controller-focused').forEach(el => el.classList.remove('controller-focused'));
+}
+
+// 60Hz loop to retrieve gamepad inputs
+function gamepadLoop() {
+  const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+  let gp = null;
+  for (let i = 0; i < gamepads.length; i++) {
+    if (gamepads[i]) {
+      gp = gamepads[i];
+      break;
+    }
+  }
+
+  if (gp) {
+    handleGamepadInput(gp);
+  }
+
+  gamepadLoopId = setTimeout(gamepadLoop, 16);
+}
+
+// Process buttons & axis movements
+function handleGamepadInput(gp) {
+  lastInputDevice = 'controller';
+  
+  // Check global shortcut: LS(10) + RT(7) held for 2 seconds
+  if (state.enableControllerShortcut) {
+    const rtBtn = gp.buttons[7] && (gp.buttons[7].pressed || (typeof gp.buttons[7].value === 'number' && gp.buttons[7].value > 0.5));
+    const lsBtn = gp.buttons[10] && (gp.buttons[10].pressed || (typeof gp.buttons[10].value === 'number' && gp.buttons[10].value > 0.5));
+    
+    if (rtBtn && lsBtn) {
+      if (startBackPressStart === 0) {
+        startBackPressStart = Date.now();
+      } else if (Date.now() - startBackPressStart >= 2000) {
+        if (!globalShortcutWasPressed) {
+          if (window.electronAPI) {
+            if (document.visibilityState === 'hidden' || !document.hasFocus()) {
+              window.electronAPI.restoreWindow();
+            } else {
+              window.electronAPI.toggleFullscreen();
+            }
+          }
+          globalShortcutWasPressed = true;
+        }
+      }
+    } else {
+      startBackPressStart = 0;
+      globalShortcutWasPressed = false;
+    }
+  }
+
+  // 1. Digital button click handling (A, B, X, Y, D-pad, etc)
+  gp.buttons.forEach((btn, idx) => {
+    // Support analog triggers as "pressed"
+    const isPressed = btn.pressed || (typeof btn.value === 'number' && btn.value > 0.5);
+    const wasPressed = prevButtons[idx] || false;
+    prevButtons[idx] = isPressed;
+
+    if (isPressed && !wasPressed) {
+      if (idx === 0) { // A press - record start time + LT state, but do NOT fire action yet (decide on release)
+        aPressStart = Date.now();
+        lastControllerLT = !!(gp.buttons[6] && (gp.buttons[6].pressed || (gp.buttons[6].value > 0.5)));
+      } else {
+        triggerGamepadButton(idx);
+      }
+    }
+
+    // A release: decide short press (perform action) or long press (enter multi-select)
+    if (!isPressed && wasPressed && idx === 0) {
+      const dur = Date.now() - aPressStart;
+      if (dur > 550) {
+        // Long press A on focused game card -> enter multi-select mode
+        if (state.controllerFocusArea === 'main') {
+          const main = getMainElements();
+          const t = main[state.controllerFocusIndex];
+          if (t && t.classList.contains('game-card')) {
+            const appId = parseInt(t.dataset.appId, 10);
+            if (!isNaN(appId)) {
+              const wasOff = !state.multiSelectMode;
+              state.multiSelectMode = true;
+              updateMultiSelectButton();
+              if (wasOff) {
+                showToast('Multi-select mode enabled via long-press A', 'info');
+              }
+              if (!state.selectedAppIds.has(appId)) {
+                state.selectedAppIds.add(appId);
+                state.lastSelectedAppId = appId;
+              }
+              updateSelectionUI();
+            }
+          }
+        }
+      } else {
+        // Short press A: perform normal action (click equivalent)
+        triggerGamepadActionA();
+      }
+    }
+  });
+
+  // Right stick as mouse scroll wheel (independent of left-stick cooldown, smooth)
+  lastInputDevice = 'controller';
+  const rStickY = gp.axes[3] || 0;
+  const rStickX = gp.axes[2] || 0;
+
+  if (Math.abs(rStickY) > 0.12 || Math.abs(rStickX) > 0.12) {
+    // Find the best scrollable container for the current context (main view, sidecar, or modal)
+    let scroller = null;
+
+    const openModal = document.querySelector('.modal-overlay:not(.hidden)');
+    if (openModal) {
+      // Game details modal has its own scrollable body (this is the main scroll area for long content)
+      const detailsBody = openModal.querySelector('.game-details-body');
+      const modalBody = openModal.querySelector('.modal-body');
+      const helpContent = openModal.querySelector('.help-content');
+      const card = openModal.querySelector('.modal-card');
+      if (detailsBody && detailsBody.scrollHeight > detailsBody.clientHeight + 2) {
+        scroller = detailsBody;
+      } else if (modalBody && modalBody.scrollHeight > modalBody.clientHeight + 2) {
+        scroller = modalBody;
+      } else if (helpContent && helpContent.scrollHeight > helpContent.clientHeight + 2) {
+        scroller = helpContent;
+      } else if (card && card.scrollHeight > card.clientHeight + 2) {
+        scroller = card;
+      } else {
+        scroller = openModal;
+      }
+    } else if (elements.sidecarPanel && !elements.sidecarPanel.classList.contains('closed')) {
+      scroller = elements.sidecarPanel.querySelector('.sidecar-body') || elements.sidecarPanel;
+    } else if (elements.mainView) {
+      scroller = elements.mainView;
+    } else {
+      scroller = document.documentElement;
+    }
+
+    if (scroller) {
+      if (Math.abs(rStickY) > 0.12) {
+        scroller.scrollTop += rStickY * 36;  // vertical scroll (down = positive)
+      }
+      if (Math.abs(rStickX) > 0.12) {
+        scroller.scrollLeft += rStickX * 36; // horizontal if the container supports it
+      }
+    }
+  }
+
+  // 2. Left stick / D-pad navigation cooldown (prevents too-fast repeats)
+  if (axisCooldown > 0) {
+    axisCooldown--;
+    return;
+  }
+
+  lastInputDevice = 'controller';
+  const stickX = gp.axes[0];
+  const stickY = gp.axes[1];
+  const threshold = 0.5;
+
+  if (stickX < -threshold) {
+    triggerGamepadDirection('left');
+    axisCooldown = 12;
+  } else if (stickX > threshold) {
+    triggerGamepadDirection('right');
+    axisCooldown = 12;
+  } else if (stickY < -threshold) {
+    triggerGamepadDirection('up');
+    axisCooldown = 12;
+  } else if (stickY > threshold) {
+    triggerGamepadDirection('down');
+    axisCooldown = 12;
+  }
+}
+
+// Map standard button indices to navigation commands
+function triggerGamepadButton(idx) {
+  switch (idx) {
+    case 12: // D-Pad Up
+      triggerGamepadDirection('up');
+      break;
+    case 13: // D-Pad Down
+      triggerGamepadDirection('down');
+      break;
+    case 14: // D-Pad Left
+      triggerGamepadDirection('left');
+      break;
+    case 15: // D-Pad Right
+      triggerGamepadDirection('right');
+      break;
+      
+    case 0: // A (South button)
+      triggerGamepadActionA();
+      break;
+    case 1: // B (East button)
+      triggerGamepadActionB();
+      break;
+    case 2: // X (West button) - focus top right buttons row (header controls), press again back to grid
+      triggerGamepadActionX();
+      break;
+    case 3: // Y (North button) - toggle filters (all visible), back to grid
+      triggerGamepadActionY();
+      break;
+    case 4: // LB (Left Bumper)
+      handleLB();
+      break;
+    case 5: // RB (Right Bumper)
+      handleRB();
+      break;
+    case 8: // Back / View / Select button
+      if (elements.folderDropdown) {
+        showSelectDropdownModal(elements.folderDropdown);
+      }
+      break;
+    // case 7 (RT) unmapped to prevent sidecar opening and conflicts with global shortcut
+  }
+}
+
+// Helper: Check if element is visible and interactive
+function isElementVisible(el) {
+  if (el.offsetWidth === 0 || el.offsetHeight === 0) return false;
+  
+  // Check if any parent container is hidden/collapsed
+  let parent = el;
+  while (parent) {
+    if (parent.classList) {
+      if (parent.classList.contains('hidden') || parent.classList.contains('closed')) {
+        return false;
+      }
+      if (parent.classList.contains('main-filters-bar') && parent.classList.contains('collapsed')) {
+        return false;
+      }
+      if (parent.classList.contains('sidebar') && parent.classList.contains('collapsed')) {
+        return false;
+      }
+    }
+    parent = parent.parentElement;
+  }
+  
+  const rect = el.getBoundingClientRect();
+  if (rect.width === 0 || rect.height === 0) return false;
+  return true;
+}
+
+// Get all interactive visible elements in Sidebar, Content Header, and Filters Bar
+function getLeftElements() {
+  const list = [];
+  
+  // Sidebar / left panel (vertical flow) - folders, hamburger related
+  const sidebar = document.querySelector('.sidebar');
+  if (sidebar && isElementVisible(sidebar)) {
+    const els = Array.from(sidebar.querySelectorAll('#btnNewFolder, .folder-nav-header, .tree-game-item, .footer-icon-btn'));
+    list.push(...els);
+  }
+  
+  // Filters when open (part of top-left usability)
+  const filtersBar = document.querySelector('.main-filters-bar');
+  if (filtersBar && !filtersBar.classList.contains('collapsed') && isElementVisible(filtersBar)) {
+    const els = Array.from(filtersBar.querySelectorAll('.tristate-btn, .segment-btn, .multiselect-trigger, #selectMetacritic, #selectSort, #selectGroupBy, #btnClearAllFilters'));
+    els.sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left);
+    list.push(...els);
+  }
+  
+  return list.filter(isElementVisible);
+}
+
+function getMainElements() {
+  const list = [];
+  // Game cards / art (in visual order for controller nav)
+  const cards = Array.from(document.querySelectorAll('.game-card'));
+  list.push(...cards.filter(isElementVisible));
+  return list;
+}
+
+function getGridElements() {
+  // alias for backward
+  return getMainElements();
+}
+
+// Get visible interactive elements inside active modal
+function getModalElements() {
+  // Prefer the top-most (last in DOM) visible modal so stacked dialogs like confirm over details work
+  const modals = Array.from(document.querySelectorAll('.modal-overlay:not(.hidden)'));
+  const activeModal = modals[modals.length - 1] || null;
+  if (!activeModal) return [];
+  // Include form controls, buttons, AND the media thumbnails (videos + screenshots) so they can be controller-focused
+  const els = Array.from(activeModal.querySelectorAll('input, select, button, .btn, .video-thumb, .screenshot-thumb'));
+  return els.filter(isElementVisible);
+}
+
+// Get interactive elements in the screenshot lightbox (for controller nav)
+function getLightboxElements() {
+  const lb = document.querySelector('.media-lightbox:not(.hidden)');
+  if (!lb) return [];
+  const els = Array.from(lb.querySelectorAll('button, .lightbox-close, .lightbox-nav'));
+  return els.filter(isElementVisible);
+}
+
+// Get visible interactive elements inside active multiselect dropdown
+function getDropdownElements() {
+  const activeDropdown = document.querySelector('.multiselect-dropdown:not(.hidden)');
+  if (!activeDropdown) return [];
+  const els = Array.from(activeDropdown.querySelectorAll('input[type="text"], .multiselect-option'));
+  return els.filter(isElementVisible);
+}
+
+// Get visible elements inside sidecar drawer
+function getRightElements() {
+  const panel = document.getElementById('sidecarPanel');
+  if (!panel || panel.classList.contains('closed')) return [];
+  const els = Array.from(panel.querySelectorAll('.sidecar-folder-item, .sidecar-delete-btn, .close-sidecar-btn, #btnSidecarNewFolder, #btnSidecarSaveView'));
+  els.sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
+  return els.filter(isElementVisible);
+}
+
+function getSidecarElements() {
+  return getRightElements();
+}
+
+function getHeaderElements() {
+  const hc = document.querySelector('.header-controls');
+  if (!hc || !isElementVisible(hc)) return [];
+  // Return interactive elements in DOM order so tab navigation feels natural from left to right.
+  const allInteractive = Array.from(hc.querySelectorAll('button, input, select'));
+  return allInteractive.filter(isElementVisible);
+}
+
+function getFiltersElements() {
+  const bar = document.querySelector('.main-filters-bar');
+  if (!bar || bar.classList.contains('collapsed') || !isElementVisible(bar)) return [];
+  const els = Array.from(bar.querySelectorAll('button, select, input, .multiselect-trigger'));
+  return els.filter(isElementVisible);
+}
+
+// Get buttons from the in-app virtual keyboard for controller navigation
+function getKeyboardElements() {
+  const kb = document.getElementById('virtualKeyboard');
+  if (!kb || kb.classList.contains('hidden')) return [];
+  let els = Array.from(kb.querySelectorAll('.vk-key'));
+  // Include the header close button so it can be highlighted/selected with controller
+  const closeBtn = kb.querySelector('#vkCloseBtn');
+  if (closeBtn) {
+    els.push(closeBtn);
+  }
+  const visible = els.filter(isElementVisible);
+  // If the visibility check fails due to timing right after show, fall back to all keys
+  // so controller focus can still land on them.
+  return visible.length > 0 ? visible : els;
+}
+
+// === Virtual On-Screen Keyboard (in-app, controller controllable) ===
+
+function showVirtualKeyboard(inputEl = null) {
+  if (lastInputDevice !== 'controller') return; // only show for controller, not mouse
+  if (inputEl && (inputEl.tagName === 'INPUT' || inputEl.tagName === 'TEXTAREA')) {
+    lastActiveInput = inputEl;
+  } else if (document.activeElement && (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA')) {
+    lastActiveInput = document.activeElement;
+  }
+
+  const kb = document.getElementById('virtualKeyboard');
+  if (!kb) return;
+
+  kb.classList.remove('hidden');
+
+  // Force layout so dimensions are computed immediately
+  void kb.offsetWidth;
+
+  // Attach handlers once (can be immediate)
+  if (!kb.dataset.handlersAttached) {
+    attachVirtualKeyboardHandlers(kb);
+    kb.dataset.handlersAttached = 'true';
+  }
+
+  // Small delay (double rAF) to allow the DOM to fully render / compute layout
+  // before we try to collect .vk-key elements and apply .controller-focused.
+  // This fixes the case where the keyboard pops up but no key gets highlighted.
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      if (!kb.classList.contains('hidden')) {
+        state.controllerFocusArea = 'keyboard';
+        state.controllerFocusIndex = 0;
+        updateControllerFocus();
+      }
+    });
+  });
+}
+
+function hideVirtualKeyboard() {
+  const kb = document.getElementById('virtualKeyboard');
+  if (kb) kb.classList.add('hidden');
+
+  justClosedKeyboard = true;
+
+  // After closing with controller, return focus to the text field itself if possible
+  // so A can re-open it, and it gets the highlight
+  let restored = false;
+  if (lastActiveInput) {
+    const modalEls = getModalElements();
+    let idx = modalEls.indexOf(lastActiveInput);
+    if (idx >= 0) {
+      state.controllerFocusArea = 'modal';
+      state.controllerFocusIndex = idx;
+      restored = true;
+    } else {
+      const headerEls = getHeaderElements();
+      idx = headerEls.indexOf(lastActiveInput);
+      if (idx >= 0) {
+        state.controllerFocusArea = 'header';
+        state.controllerFocusIndex = idx;
+        restored = true;
+      } else {
+        const dropdownEls = getDropdownElements();
+        idx = dropdownEls.indexOf(lastActiveInput);
+        if (idx >= 0) {
+          state.controllerFocusArea = 'dropdown';
+          state.controllerFocusIndex = idx;
+          restored = true;
+        }
+      }
+    }
+  }
+
+  if (!restored) {
+    state.controllerFocusArea = 'main';
+    state.controllerFocusIndex = getRestoredMainFocusIndex();
+  }
+  updateControllerFocus({ scroll: false });
+
+  // Keep real DOM focus on the input for the caret
+  if (lastActiveInput) {
+    try { lastActiveInput.focus(); } catch (e) {}
+  }
+}
+
+function attachVirtualKeyboardHandlers(kb) {
+  // Close button
+  const closeBtn = kb.querySelector('#vkCloseBtn');
+  if (closeBtn) {
+    closeBtn.addEventListener('click', hideVirtualKeyboard);
+  }
+
+  // All keys
+  const keys = kb.querySelectorAll('.vk-key');
+  keys.forEach(btn => {
+    const key = btn.dataset.key;
+    btn.addEventListener('click', () => {
+      handleVirtualKeyPress(key);
+    });
+  });
+}
+
+function handleVirtualKeyPress(rawKey) {
+  if (!lastActiveInput) {
+    // try to find the most recent focused text field
+    const active = document.activeElement;
+    if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) {
+      lastActiveInput = active;
+    } else {
+      return;
+    }
+  }
+
+  const input = lastActiveInput;
+  if (!input || input.disabled || input.readOnly) return;
+
+  let value = input.value;
+  let start = input.selectionStart !== null ? input.selectionStart : value.length;
+  let end = input.selectionEnd !== null ? input.selectionEnd : start;
+
+  let char = rawKey;
+
+  if (rawKey === 'backspace' || rawKey === '←') {
+    if (start === end && start > 0) {
+      input.value = value.slice(0, start - 1) + value.slice(end);
+      input.selectionStart = input.selectionEnd = start - 1;
+    } else {
+      input.value = value.slice(0, start) + value.slice(end);
+      input.selectionStart = input.selectionEnd = start;
+    }
+  } else if (rawKey === 'enter' || rawKey === '⏎') {
+    if (input.tagName.toLowerCase() === 'textarea') {
+      input.value = value.slice(0, start) + '\n' + value.slice(end);
+      input.selectionStart = input.selectionEnd = start + 1;
+    } else {
+      // For single line inputs, hide keyboard (like submit)
+      hideVirtualKeyboard();
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      return;
+    }
+  } else if (rawKey === 'shift' || rawKey === '⇧') {
+    vkShift = !vkShift;
+    updateVirtualKeyboardShiftState();
+    return;
+  } else if (rawKey === 'close') {
+    hideVirtualKeyboard();
+    return;
+  } else if (rawKey === ' ') {
+    char = ' ';
+    input.value = value.slice(0, start) + char + value.slice(end);
+    input.selectionStart = input.selectionEnd = start + 1;
+  } else {
+    // regular char
+    if (vkShift) {
+      char = char.toUpperCase();
+    }
+    input.value = value.slice(0, start) + char + value.slice(end);
+    input.selectionStart = input.selectionEnd = start + char.length;
+  }
+
+  // keep focus and notify
+  input.focus();
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+function updateVirtualKeyboardShiftState() {
+  const kb = document.getElementById('virtualKeyboard');
+  if (!kb) return;
+  const letterKeys = kb.querySelectorAll('.vk-key[data-key]');
+  letterKeys.forEach(btn => {
+    const k = btn.dataset.key;
+    if (k && k.length === 1 && /[a-z]/.test(k)) {
+      btn.textContent = vkShift ? k.toUpperCase() : k;
+    }
+  });
+}
+
+// Reset focus to modal elements
+function resetControllerFocusToModal(options = {}) {
+  const { scroll = true } = options;
+  
+  if (state.controllerFocusArea !== 'modal' && state.controllerFocusArea !== 'lightbox' && state.controllerFocusArea !== 'dropdown') {
+    state.preModalFocusArea = state.controllerFocusArea;
+    state.preModalFocusIndex = state.controllerFocusIndex;
+  }
+  
+  state.controllerFocusIndex = 0;
+  if (document.querySelector('.media-lightbox:not(.hidden)')) {
+    state.controllerFocusArea = 'lightbox';
+  } else if (document.querySelector('.modal-overlay:not(.hidden)')) {
+    state.controllerFocusArea = 'modal';
+    if (lastInputDevice === 'controller') {
+      // For modals with text inputs (like create/rename folder, settings), prefer the first text input
+      // so that the virtual keyboard gets highlighted instead of the close X button.
+      const els = getModalElements();
+      const textInputIdx = els.findIndex(el => (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') && (el.type === 'text' || !el.type || el.type === 'password'));
+      if (textInputIdx >= 0) {
+        state.controllerFocusIndex = textInputIdx;
+      } else {
+        state.controllerFocusIndex = 0;
+      }
+    }
+  } else if (document.querySelector('.multiselect-dropdown:not(.hidden)')) {
+    state.controllerFocusArea = 'dropdown';
+  } else if (elements.sidecarPanel && !elements.sidecarPanel.classList.contains('closed')) {
+    state.controllerFocusArea = 'right';
+  }
+  if (lastInputDevice === 'controller') {
+    updateControllerFocus({ scroll });
+  }
+}
+
+// Restore focus from modal elements back to their previous state
+function restoreControllerFocusFromModal(options = {}) {
+  const { scroll = true } = options;
+  if (state.preModalFocusArea && state.preModalFocusArea !== 'modal' && state.preModalFocusArea !== 'lightbox') {
+    state.controllerFocusArea = state.preModalFocusArea;
+    state.controllerFocusIndex = state.preModalFocusIndex || 0;
+    state.preModalFocusArea = null;
+    state.preModalFocusIndex = null;
+    
+    // In case the restored index is now out of bounds (e.g. elements changed)
+    if (lastInputDevice === 'controller') {
+      updateControllerFocus({ scroll });
+    }
+  } else {
+    resetControllerFocus(options);
+  }
+}
+
+// Reset focus to dashboard controls
+function resetControllerFocus(options = {}) {
+  const { scroll = true } = options;
+  state.controllerFocusArea = 'main';
+  state.controllerFocusIndex = getRestoredMainFocusIndex();
+  updateControllerFocus({ scroll });
+}
+
+// Returns the best index to use when returning focus to the game grid.
+// Prefers the same game by appId (survives filtering/sorting), falls back to a card near current viewport or last index.
+function getRestoredMainFocusIndex() {
+  const mainEls = getMainElements();
+  if (mainEls.length === 0) return 0;
+
+  // Best: find by remembered appId
+  if (lastMainGridAppId) {
+    for (let i = 0; i < mainEls.length; i++) {
+      if (mainEls[i].dataset.appId == lastMainGridAppId) {
+        lastMainGridIndex = i;
+        return i;
+      }
+    }
+  }
+
+  // Try to find a card that is currently visible in the viewport (for mouse users or after modals)
+  const scroller = elements.mainView;
+  if (scroller) {
+    const scrollTop = scroller.scrollTop;
+    const viewHeight = scroller.clientHeight;
+    let bestVisible = -1;
+    let bestDist = Infinity;
+    for (let i = 0; i < mainEls.length; i++) {
+      const el = mainEls[i];
+      const rect = el.getBoundingClientRect();
+      const elTop = el.offsetTop;  // relative to container? use getBounding for vis
+      // rough: card whose top is within current scroll view
+      const cardTopRel = rect.top + scroller.scrollTop - scroller.getBoundingClientRect().top; // approx
+      if (cardTopRel >= scrollTop && cardTopRel <= scrollTop + viewHeight) {
+        const centerDist = Math.abs((cardTopRel + rect.height / 2) - (scrollTop + viewHeight / 2));
+        if (centerDist < bestDist) {
+          bestDist = centerDist;
+          bestVisible = i;
+        }
+      }
+    }
+    if (bestVisible >= 0) {
+      lastMainGridIndex = bestVisible;
+      return bestVisible;
+    }
+  }
+
+  // Fall back to last numeric index (clamped)
+  let idx = lastMainGridIndex;
+  if (idx < 0 || idx >= mainEls.length) idx = 0;
+  return idx;
+}
+
+// Move focused selection layout logically
+function triggerGamepadDirection(dir) {
+  if (state.controllerFocusArea === 'keyboard') {
+    const kb = document.getElementById('virtualKeyboard');
+    if (!kb || kb.classList.contains('hidden')) return;
+
+    const rows = Array.from(kb.querySelectorAll('.vk-row'));
+    if (rows.length === 0) return;
+
+    // Build 2D grid of keys for proper row/col navigation (up/down changes row, left/right within row)
+    const grid = rows.map(r => Array.from(r.querySelectorAll('.vk-key')));
+    const flatEls = getKeyboardElements();
+    if (flatEls.length === 0) return;
+
+    let idx = state.controllerFocusIndex;
+    if (idx < 0 || idx >= flatEls.length) idx = 0;
+
+    const numGridKeys = grid.reduce((sum, r) => sum + r.length, 0);
+
+    // Handle close button (extra last item)
+    const isOnClose = (idx >= numGridKeys);
+    if (isOnClose) {
+      if (dir === 'left' || dir === 'up') {
+        // go to last of last row
+        idx = numGridKeys - 1;
+      } else if (dir === 'right' || dir === 'down') {
+        // stay
+      }
+      state.controllerFocusIndex = idx;
+      updateControllerFocus();
+      return;
+    }
+
+    // Find which row/col the current index is in (flat is row-major)
+    let curRow = 0;
+    let curCol = 0;
+    let cumulative = 0;
+    for (let r = 0; r < grid.length; r++) {
+      const rowLen = grid[r].length;
+      if (idx >= cumulative && idx < cumulative + rowLen) {
+        curRow = r;
+        curCol = idx - cumulative;
+        break;
+      }
+      cumulative += rowLen;
+    }
+
+    if (dir === 'left') {
+      const rowLen = grid[curRow].length;
+      curCol = (curCol - 1 + rowLen) % rowLen;
+    } else if (dir === 'right') {
+      const rowLen = grid[curRow].length;
+      // from last col of last row, right goes to close button
+      if (curRow === grid.length - 1 && curCol === rowLen - 1) {
+        idx = numGridKeys;
+        state.controllerFocusIndex = idx;
+        updateControllerFocus();
+        return;
+      }
+      curCol = (curCol + 1) % rowLen;
+    } else if (dir === 'up') {
+      if (curRow > 0) {
+        curRow--;
+        const newLen = grid[curRow].length;
+        curCol = Math.min(curCol, newLen - 1);
+      }
+    } else if (dir === 'down') {
+      if (curRow < grid.length - 1) {
+        curRow++;
+        const newLen = grid[curRow].length;
+        curCol = Math.min(curCol, newLen - 1);
+      }
+    }
+
+    // Recompute flat index from new row/col
+    let newIdx = 0;
+    for (let r = 0; r < curRow; r++) {
+      newIdx += grid[r].length;
+    }
+    newIdx += curCol;
+
+    state.controllerFocusIndex = newIdx;
+    updateControllerFocus();
+    return;
+  }
+
+  const lightboxOpen = document.querySelector('.media-lightbox:not(.hidden)');
+  if (lightboxOpen) {
+    // Lightbox Navigation (linear: prev, close, next etc.)
+    const els = getLightboxElements();
+    if (els.length === 0) return;
+    if (dir === 'left' || dir === 'up') {
+      state.controllerFocusIndex = (state.controllerFocusIndex - 1 + els.length) % els.length;
+    } else {
+      state.controllerFocusIndex = (state.controllerFocusIndex + 1) % els.length;
+    }
+    updateControllerFocus();
+    return;
+  }
+
+  if (document.querySelector('.modal-overlay:not(.hidden)')) {
+    // Modal Navigation (linear)
+    const els = getModalElements();
+    if (els.length === 0) return;
+    if (dir === 'left' || dir === 'up') {
+      state.controllerFocusIndex = (state.controllerFocusIndex - 1 + els.length) % els.length;
+    } else {
+      state.controllerFocusIndex = (state.controllerFocusIndex + 1) % els.length;
+    }
+    updateControllerFocus();
+    return;
+  }
+
+  if (document.querySelector('.multiselect-dropdown:not(.hidden)')) {
+    // Dropdown Navigation (linear)
+    const els = getDropdownElements();
+    if (els.length === 0) return;
+    if (dir === 'left' || dir === 'up') {
+      state.controllerFocusIndex = (state.controllerFocusIndex - 1 + els.length) % els.length;
+    } else {
+      state.controllerFocusIndex = (state.controllerFocusIndex + 1) % els.length;
+    }
+    updateControllerFocus();
+    return;
+  }
+  
+  if (state.controllerFocusArea === 'right') {
+    // Sidecar / right Navigation (linear)
+    const els = getRightElements();
+    if (els.length === 0) return;
+    if (dir === 'left' || dir === 'up') {
+      state.controllerFocusIndex = (state.controllerFocusIndex - 1 + els.length) % els.length;
+    } else {
+      state.controllerFocusIndex = (state.controllerFocusIndex + 1) % els.length;
+    }
+    updateControllerFocus();
+    return;
+  }
+
+  // Normal Dashboard View - left/main/right sections
+  const leftEls = getLeftElements();
+  const mainEls = getMainElements();
+
+  if (state.controllerFocusArea === 'left') {
+    const leftEls = getLeftElements();
+    if (leftEls.length === 0) return;
+    if (dir === 'left' || dir === 'up') {
+      if (state.controllerFocusIndex > 0) state.controllerFocusIndex--;
+    } else if (dir === 'right' || dir === 'down') {
+      if (state.controllerFocusIndex < leftEls.length - 1) state.controllerFocusIndex++;
+    }
+    updateControllerFocus();
+    return;
+  }
+
+  if (state.controllerFocusArea === 'main') {
+    const mainEls = getMainElements();
+    if (mainEls.length === 0) return;
+
+    const currentEl = mainEls[state.controllerFocusIndex];
+    if (!currentEl) {
+      state.controllerFocusIndex = 0;
+      updateControllerFocus();
+      return;
+    }
+
+    const currentRect = currentEl.getBoundingClientRect();
+    const currentCenterX = currentRect.left + currentRect.width / 2;
+    const currentCenterY = currentRect.top + currentRect.height / 2;
+
+    let bestIdx = state.controllerFocusIndex;
+    let bestDist = Infinity;
+
+    mainEls.forEach((el, i) => {
+      if (i === state.controllerFocusIndex) return;
+      const r = el.getBoundingClientRect();
+      const cx = r.left + r.width / 2;
+      const cy = r.top + r.height / 2;
+
+      const dx = cx - currentCenterX;
+      const dy = cy - currentCenterY;
+
+      let isInDirection = false;
+      let dist = 0;
+
+      if (dir === 'left' && dx < -5) {
+        isInDirection = true;
+        dist = Math.abs(dx) + Math.abs(dy) * 0.5; // prefer same row
+      } else if (dir === 'right' && dx > 5) {
+        isInDirection = true;
+        dist = Math.abs(dx) + Math.abs(dy) * 0.5;
+      } else if (dir === 'up' && dy < -5) {
+        isInDirection = true;
+        dist = Math.abs(dy) + Math.abs(dx) * 0.5;
+      } else if (dir === 'down' && dy > 5) {
+        isInDirection = true;
+        dist = Math.abs(dy) + Math.abs(dx) * 0.5;
+      }
+
+      if (isInDirection && dist < bestDist) {
+        bestDist = dist;
+        bestIdx = i;
+      }
+    });
+
+    if (bestIdx !== state.controllerFocusIndex) {
+      state.controllerFocusIndex = bestIdx;
+    }
+    updateControllerFocus();
+    return;
+  }
+
+  if (state.controllerFocusArea === 'right') {
+    const rightEls = getRightElements();
+    if (rightEls.length === 0) return;
+    if (dir === 'left' || dir === 'up') {
+      if (state.controllerFocusIndex > 0) state.controllerFocusIndex--;
+    } else if (dir === 'right' || dir === 'down') {
+      if (state.controllerFocusIndex < rightEls.length - 1) state.controllerFocusIndex++;
+    }
+    updateControllerFocus();
+    return;
+  }
+
+  if (state.controllerFocusArea === 'header') {
+    const els = getHeaderElements();
+    if (els.length === 0) return;
+    const curr = els[state.controllerFocusIndex];
+
+    if (dir === 'left' || dir === 'up') {
+      state.controllerFocusIndex = (state.controllerFocusIndex - 1 + els.length) % els.length;
+    } else {
+      state.controllerFocusIndex = (state.controllerFocusIndex + 1) % els.length;
+    }
+    updateControllerFocus();
+    return;
+  }
+
+  if (state.controllerFocusArea === 'filters') {
+    const els = getFiltersElements();
+    if (els.length === 0) return;
+    if (dir === 'left' || dir === 'up') {
+      state.controllerFocusIndex = (state.controllerFocusIndex - 1 + els.length) % els.length;
+    } else {
+      state.controllerFocusIndex = (state.controllerFocusIndex + 1) % els.length;
+    }
+    updateControllerFocus();
+    return;
+  }
+
+  if (state.controllerFocusArea === 'keyboard') {
+    const els = getKeyboardElements();
+    if (els.length === 0) return;
+    if (dir === 'left' || dir === 'up') {
+      state.controllerFocusIndex = (state.controllerFocusIndex - 1 + els.length) % els.length;
+    } else {
+      state.controllerFocusIndex = (state.controllerFocusIndex + 1) % els.length;
+    }
+    updateControllerFocus();
+    return;
+  }
+
+  // (removed duplicate main grid navigation block - logic consolidated above)
+}
+
+// Jump focus index (shoulder buttons)
+function triggerGamepadJump(amount) {
+  // Jump still supported for other uses, using new areas
+  if (state.controllerFocusArea === 'left') {
+    const left = getLeftElements();
+    if (left.length === 0) return;
+    state.controllerFocusIndex = (state.controllerFocusIndex + amount + left.length) % left.length;
+  } else if (state.controllerFocusArea === 'main') {
+    const main = getMainElements();
+    if (main.length === 0) return;
+    state.controllerFocusIndex = (state.controllerFocusIndex + amount + main.length) % main.length;
+  } else if (state.controllerFocusArea === 'right') {
+    const right = getRightElements();
+    if (right.length === 0) return;
+    state.controllerFocusIndex = (state.controllerFocusIndex + amount + right.length) % right.length;
+  } else if (state.controllerFocusArea === 'modal') {
+    const els = getModalElements();
+    if (els.length === 0) return;
+    state.controllerFocusIndex = (state.controllerFocusIndex + amount + els.length) % els.length;
+  } else if (state.controllerFocusArea === 'dropdown') {
+    const els = getDropdownElements();
+    if (els.length === 0) return;
+    state.controllerFocusIndex = (state.controllerFocusIndex + amount + els.length) % els.length;
+  } else if (state.controllerFocusArea === 'lightbox') {
+    const els = getLightboxElements();
+    if (els.length === 0) return;
+    state.controllerFocusIndex = (state.controllerFocusIndex + amount + els.length) % els.length;
+  } else if (state.controllerFocusArea === 'keyboard') {
+    const els = getKeyboardElements();
+    if (els.length === 0) return;
+    state.controllerFocusIndex = (state.controllerFocusIndex + amount + els.length) % els.length;
+  }
+  updateControllerFocus();
+}
+
+// Apply visual focused class and auto-scroll viewport
+function updateControllerFocus(options = {}) {
+  const { scroll = true } = options;
+
+  // If controller focus area is dropdown but no dropdown is open, automatically restore focus area
+  if (state.controllerFocusArea === 'dropdown' && !document.querySelector('.multiselect-dropdown:not(.hidden)')) {
+    if (state.preDropdownArea) {
+      state.controllerFocusArea = state.preDropdownArea;
+      state.controllerFocusIndex = state.preDropdownIndex || 0;
+      state.preDropdownArea = null;
+      state.preDropdownIndex = null;
+    } else {
+      state.controllerFocusArea = 'filters';
+      state.controllerFocusIndex = 0;
+    }
+  }
+
+  // If controller focus is moving to a non-keyboard area while the virtual keyboard is visible, close it
+  const kbEl = document.getElementById('virtualKeyboard');
+  // If the keyboard is visible but we're updating focus to something other than the keyboard itself,
+  // close it (covers "text field loses focus" via controller navigation).
+  const kbElCheck = document.getElementById('virtualKeyboard');
+  if (kbElCheck && !kbElCheck.classList.contains('hidden')) {
+    if (state.controllerFocusArea !== 'keyboard') {
+      hideVirtualKeyboard();
+    }
+  }
+
+  document.querySelectorAll('.controller-focused').forEach(el => el.classList.remove('controller-focused'));
+
+  let target = null;
+
+  // Check keyboard area first (even if inside a modal) so the virtual keyboard gets controller focus
+  // instead of the modal's close button (X).
+  if (state.controllerFocusArea === 'keyboard') {
+    const els = getKeyboardElements();
+    if (els.length === 0) {
+      const kb = document.getElementById('virtualKeyboard');
+      if (kb) {
+        const allKeys = Array.from(kb.querySelectorAll('.vk-key'));
+        if (allKeys.length > 0) {
+          if (state.controllerFocusIndex < 0) state.controllerFocusIndex = 0;
+          if (state.controllerFocusIndex >= allKeys.length) state.controllerFocusIndex = allKeys.length - 1;
+          target = allKeys[state.controllerFocusIndex];
+        }
+      }
+    } else {
+      if (state.controllerFocusIndex < 0) state.controllerFocusIndex = 0;
+      if (state.controllerFocusIndex >= els.length) state.controllerFocusIndex = els.length - 1;
+      target = els[state.controllerFocusIndex];
+    }
+  } else if (document.querySelector('.media-lightbox:not(.hidden)')) {
+    state.controllerFocusArea = 'lightbox';
+    const els = getLightboxElements();
+    if (state.controllerFocusIndex < 0) state.controllerFocusIndex = 0;
+    if (state.controllerFocusIndex >= els.length) state.controllerFocusIndex = els.length - 1;
+    target = els[state.controllerFocusIndex];
+  } else if (document.querySelector('.modal-overlay:not(.hidden)')) {
+    state.controllerFocusArea = 'modal';
+    const els = getModalElements();
+    if (state.controllerFocusIndex < 0) state.controllerFocusIndex = 0;
+    if (state.controllerFocusIndex >= els.length) state.controllerFocusIndex = els.length - 1;
+    target = els[state.controllerFocusIndex];
+  } else if (document.querySelector('.multiselect-dropdown:not(.hidden)')) {
+    state.controllerFocusArea = 'dropdown';
+    const els = getDropdownElements();
+    if (state.controllerFocusIndex < 0) state.controllerFocusIndex = 0;
+    if (state.controllerFocusIndex >= els.length) state.controllerFocusIndex = els.length - 1;
+    target = els[state.controllerFocusIndex];
+  } else if (state.controllerFocusArea === 'header') {
+    const els = getHeaderElements();
+    if (els.length === 0) {
+      state.controllerFocusArea = 'main';
+      state.controllerFocusIndex = getRestoredMainFocusIndex();
+    } else {
+      if (state.controllerFocusIndex < 0) state.controllerFocusIndex = 0;
+      if (state.controllerFocusIndex >= els.length) state.controllerFocusIndex = els.length - 1;
+      target = els[state.controllerFocusIndex];
+    }
+  } else if (state.controllerFocusArea === 'filters') {
+    const els = getFiltersElements();
+    if (els.length === 0) {
+      state.controllerFocusArea = 'main';
+      state.controllerFocusIndex = getRestoredMainFocusIndex();
+    } else {
+      if (state.controllerFocusIndex < 0) state.controllerFocusIndex = 0;
+      if (state.controllerFocusIndex >= els.length) state.controllerFocusIndex = els.length - 1;
+      target = els[state.controllerFocusIndex];
+    }
+  } else if (state.controllerFocusArea === 'keyboard') {
+    let els = getKeyboardElements();
+    if (els.length === 0) {
+      // Safety net: after the render delay, grab keys directly if the visible filter missed them
+      const kb = document.getElementById('virtualKeyboard');
+      if (kb) els = Array.from(kb.querySelectorAll('.vk-key'));
+    }
+    if (els.length === 0) {
+      state.controllerFocusArea = 'main';
+      state.controllerFocusIndex = getRestoredMainFocusIndex();
+    } else {
+      if (state.controllerFocusIndex < 0) state.controllerFocusIndex = 0;
+      if (state.controllerFocusIndex >= els.length) state.controllerFocusIndex = els.length - 1;
+      target = els[state.controllerFocusIndex];
+    }
+  } else if (state.controllerFocusArea === 'right') {
+    const els = getRightElements();
+    if (els.length === 0) {
+      state.controllerFocusArea = 'main';
+      state.controllerFocusIndex = getRestoredMainFocusIndex();
+    } else {
+      if (state.controllerFocusIndex < 0) state.controllerFocusIndex = 0;
+      if (state.controllerFocusIndex >= els.length) state.controllerFocusIndex = els.length - 1;
+      target = els[state.controllerFocusIndex];
+    }
+  } else {
+    const leftEls = getLeftElements();
+    const mainEls = getMainElements();
+    
+    if (state.controllerFocusArea === 'left') {
+      if (leftEls.length === 0) {
+        state.controllerFocusArea = 'main';
+        state.controllerFocusIndex = getRestoredMainFocusIndex();
+      } else {
+        if (state.controllerFocusIndex < 0) state.controllerFocusIndex = 0;
+        if (state.controllerFocusIndex >= leftEls.length) state.controllerFocusIndex = leftEls.length - 1;
+        target = leftEls[state.controllerFocusIndex];
+      }
+    }
+    
+    if (state.controllerFocusArea === 'main') {
+      if (mainEls.length === 0) {
+        state.controllerFocusArea = 'left';
+        if (leftEls.length > 0) {
+          state.controllerFocusIndex = 0;
+          target = leftEls[0];
+        }
+      } else {
+        // clamp but prefer our remembered position if it's still valid
+        if (state.controllerFocusIndex < 0 || state.controllerFocusIndex >= mainEls.length) {
+          state.controllerFocusIndex = getRestoredMainFocusIndex();
+        }
+        target = mainEls[state.controllerFocusIndex];
+      }
+    }
+  }
+
+  if (target) {
+    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
+      target.focus();
+      // Keyboard will appear on A press for all text inputs.
+      target.classList.add('controller-focused');
+      if (scroll) target.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      justClosedKeyboard = false;
+    } else if (target.tagName === 'SELECT') {
+      // Only add highlight on navigation; do NOT auto-focus the select.
+      // A button will focus/open it explicitly.
+      target.classList.add('controller-focused');
+      if (scroll) target.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    } else {
+      target.classList.add('controller-focused');
+      if (scroll) target.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+
+    // Remember last focused game in the main grid so we can return to it later
+    if (state.controllerFocusArea === 'main' && target) {
+      lastMainGridIndex = state.controllerFocusIndex;
+      // try to remember by appId so refocus works after filters/sort/search change the list
+      if (target.dataset && target.dataset.appId) {
+        lastMainGridAppId = target.dataset.appId;
+      }
+    }
+  }
+}
+
+// Button A Action: Confirm, select, or trigger launch/actions
+function triggerGamepadActionA() {
+  let target = null;
+  if (state.controllerFocusArea === 'keyboard') {
+    const kbEls = getKeyboardElements();
+    target = kbEls[state.controllerFocusIndex];
+  } else if (document.querySelector('.media-lightbox:not(.hidden)')) {
+    const els = getLightboxElements();
+    target = els[state.controllerFocusIndex];
+  } else if (document.querySelector('.modal-overlay:not(.hidden)')) {
+    const els = getModalElements();
+    target = els[state.controllerFocusIndex];
+  } else if (document.querySelector('.multiselect-dropdown:not(.hidden)')) {
+    const els = getDropdownElements();
+    target = els[state.controllerFocusIndex];
+  } else if (state.controllerFocusArea === 'right' && elements.sidecarPanel && !elements.sidecarPanel.classList.contains('closed')) {
+    const els = getSidecarElements();
+    target = els[state.controllerFocusIndex];
+  } else if (state.controllerFocusArea === 'left') {
+    const left = getLeftElements();
+    target = left[state.controllerFocusIndex];
+  } else if (state.controllerFocusArea === 'main') {
+    const main = getMainElements();
+    target = main[state.controllerFocusIndex];
+  } else if (state.controllerFocusArea === 'right') {
+    const right = getRightElements();
+    target = right[state.controllerFocusIndex];
+  } else if (state.controllerFocusArea === 'header') {
+    const header = getHeaderElements();
+    target = header[state.controllerFocusIndex];
+  } else if (state.controllerFocusArea === 'filters') {
+    const flt = getFiltersElements();
+    target = flt[state.controllerFocusIndex];
+  }
+
+  if (!target) return;
+
+  // If target is a native select dropdown, open our custom gamepad-friendly modal
+  if (target && target.tagName === 'SELECT') {
+    showSelectDropdownModal(target);
+    return;
+  }
+
+  // Special for controller on text fields: A opens (or re-opens) the virtual keyboard
+  if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) {
+    const kb = document.getElementById('virtualKeyboard');
+    if (!kb || kb.classList.contains('hidden')) {
+      showVirtualKeyboard(target);
+      return;
+    } else {
+      target.focus();
+      return;
+    }
+  }
+
+  // If A is pressed on a game-card, open options or multi select
+  if (target.classList.contains('game-card')) {
+    const appId = parseInt(target.dataset.appId, 10);
+    if (!isNaN(appId)) {
+      if (state.multiSelectMode) {
+        const fakeE = { ctrlKey: true, shiftKey: !!lastControllerLT };
+        handleGameSelect(appId, false, fakeE);
+        return;
+      }
+      const game = state.games.find(g => g.appid === appId);
+      if (game) {
+        openGameOptionsModal(game);
+        return;
+      }
+    }
+  }
+
+  // Otherwise, click the target element
+  target.click();
+
+  // If A was used on a multiselect trigger, immediately move focus into the dropdown options list
+  if (target && target.classList.contains('multiselect-trigger')) {
+    state.preDropdownArea = state.controllerFocusArea;
+    state.preDropdownIndex = state.controllerFocusIndex;
+    setTimeout(() => {
+      if (document.querySelector('.multiselect-dropdown:not(.hidden)')) {
+        state.controllerFocusArea = 'dropdown';
+        state.controllerFocusIndex = 0;
+        updateControllerFocus();
+      }
+    }, 50);
+  }
+}
+
+// Dynamically build and display a gamepad-friendly selection modal for native select dropdowns
+function showSelectDropdownModal(selectEl) {
+  const preModalArea = state.controllerFocusArea;
+  const preModalIndex = state.controllerFocusIndex;
+
+  let modal = document.getElementById('customSelectModal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'customSelectModal';
+    modal.className = 'modal-overlay hidden';
+    modal.innerHTML = `
+      <div class="modal-content" style="max-width: 360px; background: rgba(30, 30, 42, 0.97); backdrop-filter: blur(16px); border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 16px; padding: 28px; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.65);">
+        <div class="modal-header" style="margin-bottom: 20px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 12px;">
+          <h3 id="customSelectTitle" style="margin: 0; font-size: 18px; color: var(--text-color); font-weight: 700; letter-spacing: 0.5px;">Select Option</h3>
+        </div>
+        <div class="modal-body" id="customSelectOptions" style="display: flex; flex-direction: column; gap: 12px; max-height: 300px; overflow-y: auto; padding: 4px 6px;">
+          <!-- Options populated dynamically -->
+        </div>
+        <div class="modal-footer" style="padding-top: 18px; border-top: 1px solid rgba(255,255,255,0.08); margin-top: 18px;">
+          <button id="btnCancelCustomSelect" class="btn btn-secondary" style="width: 100%; padding: 12px; border-radius: 10px; font-weight: 600; font-size: 14px;">Cancel</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+    
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal || e.target.id === 'btnCancelCustomSelect') {
+        closeCustomSelectModal(preModalArea, preModalIndex);
+      }
+    });
+  }
+
+  // Find dynamic title label
+  const labelEl = selectEl.closest('.filter-group-horizontal')?.querySelector('.filter-label');
+  const title = labelEl ? labelEl.textContent.trim() : (selectEl.title || 'Select Option');
+  document.getElementById('customSelectTitle').textContent = title;
+
+  const optionsContainer = document.getElementById('customSelectOptions');
+  optionsContainer.innerHTML = '';
+
+  const options = Array.from(selectEl.options);
+  options.forEach((opt, idx) => {
+    const btn = document.createElement('button');
+    btn.className = `btn ${idx === selectEl.selectedIndex ? 'btn-primary' : 'btn-secondary'}`;
+    btn.style.textAlign = 'left';
+    btn.style.width = '100%';
+    btn.style.padding = '12px 18px';
+    btn.style.borderRadius = '10px';
+    btn.style.fontSize = '14px';
+    btn.style.display = 'flex';
+    btn.style.alignItems = 'center';
+    btn.style.justifyContent = 'space-between';
+    
+    let indicatorHtml = '';
+    if (idx === selectEl.selectedIndex) {
+      indicatorHtml = '<i class="fa-solid fa-circle-check" style="color: #fff; font-size: 14px;"></i>';
+    }
+    btn.innerHTML = `<span>${opt.textContent}</span>${indicatorHtml}`;
+
+    btn.addEventListener('click', () => {
+      selectEl.selectedIndex = idx;
+      selectEl.dispatchEvent(new Event('change', { bubbles: true }));
+      closeCustomSelectModal(preModalArea, preModalIndex);
+    });
+    optionsContainer.appendChild(btn);
+  });
+
+  modal.classList.remove('hidden');
+  
+  state.controllerFocusArea = 'modal';
+  state.controllerFocusIndex = selectEl.selectedIndex;
+  updateControllerFocus();
+}
+
+function closeCustomSelectModal(preArea, preIndex) {
+  const modal = document.getElementById('customSelectModal');
+  if (modal) modal.classList.add('hidden');
+  
+  if (preArea) {
+    state.controllerFocusArea = preArea;
+    state.controllerFocusIndex = preIndex || 0;
+    updateControllerFocus();
+  } else {
+    resetControllerFocus();
+  }
+}
+
+// Close all active multiselect dropdowns and restore focus
+function closeAllMultiselectDropdowns() {
+  const dropdowns = [
+    { dropdown: elements.tagsDropdown, trigger: elements.tagsTrigger },
+    { dropdown: elements.genresDropdown, trigger: elements.genresTrigger },
+    { dropdown: elements.metacriticDropdown, trigger: elements.metacriticTrigger },
+    { dropdown: elements.ratingsDropdown, trigger: elements.ratingsTrigger },
+    { dropdown: elements.reviewsDropdown, trigger: elements.reviewsTrigger },
+    { dropdown: elements.hltbDropdown, trigger: elements.hltbTrigger }
+  ];
+  let closedAny = false;
+  dropdowns.forEach(item => {
+    if (item.dropdown && !item.dropdown.classList.contains('hidden')) {
+      item.dropdown.classList.add('hidden');
+      if (item.trigger) item.trigger.classList.remove('active');
+      closedAny = true;
+    }
+  });
+  if (closedAny) {
+    // Restore pre-dropdown focus area/index if saved
+    if (state.preDropdownArea) {
+      state.controllerFocusArea = state.preDropdownArea;
+      state.controllerFocusIndex = state.preDropdownIndex || 0;
+      state.preDropdownArea = null;
+      state.preDropdownIndex = null;
+    } else {
+      state.controllerFocusArea = 'filters';
+      state.controllerFocusIndex = 0;
+    }
+    updateControllerFocus({ scroll: false });
+  }
+  return closedAny;
+}
+
+// Button B Action: Go back, cancel, or clear search filters
+function triggerGamepadActionB() {
+  // If the virtual keyboard is visible (even inside a modal), B closes the keyboard
+  // instead of closing the parent modal or doing other actions. This must be first.
+  const kb = document.getElementById('virtualKeyboard');
+  if (kb && !kb.classList.contains('hidden')) {
+    hideVirtualKeyboard();
+    return;
+  }
+
+  // Fallback
+  if (state.controllerFocusArea === 'keyboard') {
+    hideVirtualKeyboard();
+    return;
+  }
+
+  // If in multi-select mode, B cancels/exits the mode (per spec) and unselects all
+  if (state.multiSelectMode) {
+    exitMultiSelectMode();
+    return;
+  }
+
+  // If active multiselect dropdown is open, close it
+  if (closeAllMultiselectDropdowns()) {
+    return;
+  }
+
+  const customSelModal = document.getElementById('customSelectModal');
+  if (customSelModal && !customSelModal.classList.contains('hidden')) {
+    closeCustomSelectModal();
+    return;
+  }
+
+  if (elements.settingsModal && !elements.settingsModal.classList.contains('hidden')) {
+    closeSettingsModal();
+    return;
+  }
+  if (elements.folderModal && !elements.folderModal.classList.contains('hidden')) {
+    closeFolderModal();
+    return;
+  }
+  if (elements.confirmModal && !elements.confirmModal.classList.contains('hidden')) {
+    closeConfirmDialog(false);
+    return;
+  }
+  if (elements.gameOptionsModal && !elements.gameOptionsModal.classList.contains('hidden')) {
+    closeGameOptionsModal();
+    return;
+  }
+  if (elements.helpModal && !elements.helpModal.classList.contains('hidden')) {
+    closeHelpModal();
+    return;
+  }
+
+  const lightbox = document.querySelector('.media-lightbox:not(.hidden)');
+  if (lightbox) {
+    closeLightbox();
+    return;
+  }
+
+  // When focused in right sidecar, B closes it and returns focus to game grid (restore last card)
+  if (state.controllerFocusArea === 'right' && elements.sidecarPanel && !elements.sidecarPanel.classList.contains('closed')) {
+    closeSidecar();   // resetControllerFocus() inside already restores lastMainGridIndex
+    return;
+  }
+
+  // When focused in left menu (sidebar), B closes the menu/sidebar and returns to game grid
+  if (state.controllerFocusArea === 'left' && elements.sidebar && !elements.sidebar.classList.contains('collapsed')) {
+    elements.sidebar.classList.add('collapsed');
+    const toggle = elements.btnToggleSidebar;
+    if (toggle) {
+      const icon = toggle.querySelector('i');
+      if (icon) icon.className = 'fa-solid fa-angles-right';
+      toggle.title = 'Expand Sidebar';
+    }
+    resetControllerFocus();
+    return;
+  }
+
+  // If focus is in any secondary area, return to main
+  if (state.controllerFocusArea !== 'main') {
+    resetControllerFocus();
+    return;
+  }
+
+  // Clear search or selection as a fallback (only when not in special focused panels)
+  if (state.selectedAppIds.size > 0) {
+    state.selectedAppIds.clear();
+    state.lastSelectedAppId = null;
+    updateSelectionUI();
+  } else if (state.searchQuery) {
+    clearSearch();
+  }
+}
+
+// Button X Action: focus the top right buttons (header controls), toggle back to grid
+function triggerGamepadActionX() {
+  if (state.controllerFocusArea === 'main') {
+    const headerEls = getHeaderElements();
+    if (headerEls.length > 0) {
+      state.controllerFocusArea = 'header';
+      // X focuses header: start at index 0 (help button if visible)
+      state.controllerFocusIndex = 0;
+      updateControllerFocus();
+    }
+  } else if (state.controllerFocusArea === 'header') {
+    state.controllerFocusArea = 'main';
+    state.controllerFocusIndex = getRestoredMainFocusIndex();
+    updateControllerFocus();
+  }
+}
+
+// Button Y Action: toggle filters on/off (all filters now visible together)
+function triggerGamepadActionY() {
+  if (!elements.mainFiltersBar) return;
+  const bar = elements.mainFiltersBar;
+
+  if (bar.classList.contains('collapsed')) {
+    // open filters (all now visible) and focus first
+    bar.classList.remove('collapsed');
+    if (elements.btnToggleFilters) elements.btnToggleFilters.classList.add('active');
+    state.controllerFocusArea = 'filters';
+    state.controllerFocusIndex = 0;
+    updateControllerFocus();
+  } else {
+    // close filters, back to grid
+    bar.classList.add('collapsed');
+    if (elements.btnToggleFilters) elements.btnToggleFilters.classList.remove('active');
+    state.controllerFocusArea = 'main';
+    state.controllerFocusIndex = getRestoredMainFocusIndex();
+    updateControllerFocus();
+  }
+}
+
+// Helper: show or hide the Reset button based on active filters
+function updateResetButtonVisibility() {
+  const btnClearAll = document.getElementById('btnClearAllFilters');
+  if (!btnClearAll) return;
+
+  const isInstalledActive = elements.filterInstalled ? elements.filterInstalled.dataset.state !== 'all' : false;
+  const isVRActive = elements.filterVR ? elements.filterVR.dataset.state !== 'all' : false;
+  const isControllerActive = elements.filterController ? elements.filterController.dataset.state !== 'all' : false;
+  
+  const isMetacriticActive = state.selectedMetacritic.size > 0;
+  const isRatingsActive = state.selectedRatings.size > 0;
+  const isReviewsActive = state.selectedReviews.size > 0;
+  const isHLTBActive = state.selectedHLTB.size > 0;
+
+  const isTagsActive = state.selectedTags.size > 0;
+  const isGenresActive = state.selectedGenres.size > 0;
+
+  const hasActiveFilters = isInstalledActive || isVRActive || isControllerActive || isMetacriticActive || isRatingsActive || isReviewsActive || isHLTBActive || isTagsActive || isGenresActive;
+  
+  btnClearAll.classList.toggle('hidden', !hasActiveFilters);
+}
+
+// Set a tristate button to a specific state and update its icon
+function setTristateState(btn, state) {
+  const iconMap = { all: 'fa-minus', on: 'fa-check', off: 'fa-xmark' };
+  btn.dataset.state = state;
+  const icon = btn.querySelector('i');
+  if (icon) {
+    icon.className = `fa-solid ${iconMap[state] || 'fa-minus'}`;
+  }
+}
+
+// Wire a tristate button to cycle: all → on → off → all
+function setupTristateFilter(btn) {
+  if (!btn) return;
+  btn.addEventListener('click', () => {
+    const cur = btn.dataset.state || 'all';
+    const next = cur === 'all' ? 'on' : cur === 'on' ? 'off' : 'all';
+    setTristateState(btn, next);
+    state.selectedAppIds.clear();
+    state.lastSelectedAppId = null;
+    updateResetButtonVisibility();
+    renderDashboard();
+  });
+}
+
+// Retrieve active installation filter value from tristate button
+function getFilterInstalledValue() {
+  if (!elements.filterInstalled) return 'all';
+  const s = elements.filterInstalled.dataset.state || 'all';
+  if (s === 'on') return 'installed';
+  if (s === 'off') return 'uninstalled';
+  return 'all';
+}
+
+// Retrieve active VR filter value from tristate button
+function getFilterVRValue() {
+  if (!elements.filterVR) return 'all';
+  const s = elements.filterVR.dataset.state || 'all';
+  if (s === 'on') return 'vr-supported';
+  if (s === 'off') return 'non-vr';
+  return 'all';
+}
+
+// Retrieve active Controller filter value from tristate button
+function getFilterControllerValue() {
+  if (!elements.filterController) return 'all';
+  const s = elements.filterController.dataset.state || 'all';
+  if (s === 'on') return 'supported';
+  if (s === 'off') return 'unsupported';
+  return 'all';
+}
+
+
+
+// Intersect and calculate active matching games list
+function getFilteredGames() {
+  const installedVal = getFilterInstalledValue();
+  const vrVal = getFilterVRValue();
+  const controllerVal = getFilterControllerValue();
+  
+  const metacriticVal = elements.selectMetacritic ? elements.selectMetacritic.value : 'all';
+
+  return state.games.filter(game => {
+    // 1. Installation filter
+    if (installedVal === 'installed' && !game.isInstalled) return false;
+    if (installedVal === 'uninstalled' && game.isInstalled) return false;
+
+    // 2. VR filter (All, VR Supported = any VR support, Non-VR)
+    if (vrVal === 'vr-supported' && !game.isVRSupported) return false;
+    if (vrVal === 'non-vr' && game.isVROnly) return false;
+
+    // 3. Controller support filter
+    const support = game.controllerSupport || 'none';
+    if (controllerVal === 'supported' && support === 'none') return false;
+    if (controllerVal === 'unsupported' && support !== 'none') return false;
+
+    // 4. Metacritic Score filter (multi-select OR logic)
+    if (state.selectedMetacritic.size > 0) {
+      const score = game.metacriticScore;
+      const matchesAny = Array.from(state.selectedMetacritic).some(rangeVal => {
+        if (rangeVal === 'none') return score === undefined || score === null || score === 0;
+        const [min, max] = rangeVal.split('-').map(Number);
+        return score !== undefined && score !== null && score >= min && score <= max;
+      });
+      if (!matchesAny) return false;
+    }
+
+    // 5. Steam rating multiselect filter (ANY / OR)
+    if (state.selectedRatings.size > 0) {
+      const rating = game.reviewPercentage;
+      const matchesAnyRating = Array.from(state.selectedRatings).some(rangeVal => {
+        if (rangeVal === 'none') {
+          return rating === undefined || rating === null || rating === 0;
+        } else {
+          const [min, max] = rangeVal.split('-').map(Number);
+          return rating !== undefined && rating !== null && rating >= min && rating <= max;
+        }
+      });
+      if (!matchesAnyRating) return false;
+    }
+
+    // 5.5 Reviews Count multiselect filter (ANY / OR)
+    if (state.selectedReviews.size > 0) {
+      if (game.reviewCount === null || game.reviewCount === undefined) {
+        return false;
+      }
+      const count = game.reviewCount;
+      const matchesAnyRange = Array.from(state.selectedReviews).some(rangeVal => {
+        if (rangeVal === 'none') {
+          return count === 0;
+        } else if (rangeVal === '10k') {
+          return count >= 10000;
+        } else if (rangeVal === '9001-10k') {
+          return count >= 9001 && count <= 10000;
+        } else if (rangeVal === '8001-9k') {
+          return count >= 8001 && count <= 9000;
+        } else if (rangeVal === '7001-8k') {
+          return count >= 7001 && count <= 8000;
+        } else if (rangeVal === '6001-7k') {
+          return count >= 6001 && count <= 7000;
+        } else if (rangeVal === '5001-6k') {
+          return count >= 5001 && count <= 6000;
+        } else if (rangeVal === '4001-5k') {
+          return count >= 4001 && count <= 5000;
+        } else if (rangeVal === '3001-4k') {
+          return count >= 3001 && count <= 4000;
+        } else if (rangeVal === '2001-3k') {
+          return count >= 2001 && count <= 3000;
+        } else if (rangeVal === '1501-2k') {
+          return count >= 1501 && count <= 2000;
+        } else if (rangeVal === '1001-1500') {
+          return count >= 1001 && count <= 1500;
+        } else if (rangeVal === '501-1k') {
+          return count >= 501 && count <= 1000;
+        } else if (rangeVal === '100-500') {
+          return count >= 100 && count <= 500;
+        } else if (rangeVal === '1-100') {
+          return count >= 1 && count <= 100;
+        }
+        return false;
+      });
+      if (!matchesAnyRange) return false;
+    }
+
+    // 6. Genres multiselect filter (ANY / OR)
+    if (state.selectedGenres.size > 0) {
+      const gameGenres = game.genres || [];
+      const hasMatch = Array.from(state.selectedGenres).some(g => gameGenres.includes(g));
+      if (!hasMatch) return false;
+    }
+
+    // 7. Tags multiselect filter (ALL / AND)
+    if (state.selectedTags.size > 0) {
+      const gameTags = game.tags || [];
+      const hasAll = Array.from(state.selectedTags).every(t => gameTags.includes(t));
+      if (!hasAll) return false;
+    }
+
+    // 8. How Long to Beat (main story) filter - still uses .main
+    if (state.selectedHLTB.size > 0 && game.hltb && game.hltb.main) {
+      const hrs = game.hltb.main;
+      const matches = Array.from(state.selectedHLTB).some(bucket => {
+        if (bucket === '0-5') return hrs > 0 && hrs <= 5;
+        if (bucket === '5-10') return hrs > 5 && hrs <= 10;
+        if (bucket === '10-20') return hrs > 10 && hrs <= 20;
+        if (bucket === '20-40') return hrs > 20 && hrs <= 40;
+        if (bucket === '40+') return hrs > 40;
+        return false;
+      });
+      if (!matches) return false;
+    } else if (state.selectedHLTB.size > 0 && (!game.hltb || !game.hltb.main)) {
+      return false;
+    }
+
+    return true;
+  });
+}
+
+// Get dynamic suffix description for view titles
+function getFilterTitleSuffix() {
+  const installedVal = getFilterInstalledValue();
+  const vrVal = getFilterVRValue();
+  const controllerVal = getFilterControllerValue();
+
+  let parts = [];
+  if (installedVal === 'installed') parts.push('Installed');
+  else if (installedVal === 'uninstalled') parts.push('Uninstalled');
+
+  if (vrVal === 'vr-supported') parts.push('VR Supported');
+  else if (vrVal === 'non-vr') parts.push('Non-VR');
+
+  if (controllerVal === 'supported') parts.push('Controller Supported');
+  else if (controllerVal === 'unsupported') parts.push('Keyboard Only');
+
+  if (state.selectedHLTB.size > 0) {
+    const buckets = Array.from(state.selectedHLTB);
+    parts.push('HLTB ' + buckets.join('/'));
+  }
+
+  if (parts.length === 0) return 'Games';
+  return parts.join(' ') + ' Games';
+}
+
+// Redirect to Steam's browser protocol uninstall dialog for the target AppID
+async function uninstallGame(appId, name) {
+  const confirmed = await showConfirmDialog(
+    `Are you sure you wish to uninstall "${name}"?`,
+    { title: 'Uninstall Game', confirmText: 'Uninstall', cancelText: 'Cancel', danger: true }
+  );
+  if (!confirmed) return;
+
+  window.location.href = `steam://uninstall/${appId}`;
+  showToast(`Uninstall triggered for "${name}". Syncing status...`, 'info');
+  // Start background verification polling (checks every 3s, up to 10 times)
+  setTimeout(() => verifyUninstallStatus(appId, name, 1), 3000);
+}
+
+// Background verification polling for uninstallation detection
+async function verifyUninstallStatus(appId, name, attempt) {
+  try {
+    const res = await fetch(`/api/games/check-install?appid=${appId}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (!data.isInstalled) {
+        // Game has been successfully uninstalled!
+        const game = state.games.find(g => g.appid === appId);
+        if (game) {
+          game.isInstalled = false;
+          showToast(`"${name}" has been uninstalled successfully!`, 'success');
+          // Re-render the library viewport to remove it from "Installed" lists real-time
+          renderMainLibrary();
+          renderSidebarFolders();
+          updateStats();
+        }
+      } else {
+        // Still showing as installed. Wait and try again if under limits
+        if (attempt < 10) {
+          setTimeout(() => verifyUninstallStatus(appId, name, attempt + 1), 3000);
+        }
+      }
+    }
+  } catch (err) {
+    console.error("Error verifying uninstallation status:", err);
+  }
+}
+
+// Render the floating #-Z alphabet sidebar dynamically
+function renderAlphabetSidebar(games) {
+  const sidebar = elements.alphabetSidebar;
+  if (!sidebar) return;
+  sidebar.innerHTML = '';
+
+  // Determine which letters have matching games in the current view
+  const presentLetters = new Set();
+  games.forEach(g => {
+    const firstChar = g.name ? g.name.trim().charAt(0).toUpperCase() : '';
+    const letter = (firstChar >= 'A' && firstChar <= 'Z') ? firstChar : '#';
+    presentLetters.add(letter);
+  });
+
+  const alphabet = ['#', ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')];
+
+  alphabet.forEach(letter => {
+    const btn = document.createElement('button');
+    btn.className = 'alphabet-letter-btn';
+    btn.textContent = letter;
+
+    const isPresent = presentLetters.has(letter);
+    if (!isPresent) {
+      btn.classList.add('disabled');
+      btn.disabled = true;
+    } else {
+      btn.addEventListener('click', () => {
+        // Highlight active letter marker
+        sidebar.querySelectorAll('.alphabet-letter-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+
+        // Locate first game matching target letter in viewport
+        const container = elements.mainView;
+        const targetCard = container.querySelector(`.game-card[data-letter="${letter}"]`);
+        if (targetCard) {
+          const containerTop = container.getBoundingClientRect().top;
+          const cardTop = targetCard.getBoundingClientRect().top;
+          container.scrollTo({
+            top: container.scrollTop + (cardTop - containerTop - 16),
+            behavior: 'smooth'
+          });
+        }
+      });
+    }
+    sidebar.appendChild(btn);
+  });
+}
+
+// Global caching sets for all available tags/genres in current user library
+let allAvailableTags = [];
+let allAvailableGenres = [];
+
+// Populate all available tags and genres from the current games list
+function populateMultiselectFilters() {
+  const tagsSet = new Set();
+  const genresSet = new Set();
+
+  state.games.forEach(game => {
+    if (game.tags && Array.isArray(game.tags)) {
+      game.tags.forEach(t => tagsSet.add(t));
+    }
+    if (game.genres && Array.isArray(game.genres)) {
+      game.genres.forEach(g => genresSet.add(g));
+    }
+  });
+
+  allAvailableTags = Array.from(tagsSet).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  allAvailableGenres = Array.from(genresSet).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+
+  // Keep selected sets limited to what actually exists in current library (clean up stale)
+  Array.from(state.selectedTags).forEach(t => {
+    if (!tagsSet.has(t)) state.selectedTags.delete(t);
+  });
+  Array.from(state.selectedGenres).forEach(g => {
+    if (!genresSet.has(g)) state.selectedGenres.delete(g);
+  });
+
+  renderMultiselectOptions('tags', '');
+  renderMultiselectOptions('genres', '');
+  updateMultiselectTrigger('tags');
+  updateMultiselectTrigger('genres');
+}
+
+// Render option items in the dropdown list
+function renderMultiselectOptions(type, query = '') {
+  const listEl = type === 'tags' ? elements.tagsOptionsList : elements.genresOptionsList;
+  const sourceList = type === 'tags' ? allAvailableTags : allAvailableGenres;
+  const selectedSet = type === 'tags' ? state.selectedTags : state.selectedGenres;
+
+  if (!listEl) return;
+  listEl.innerHTML = '';
+
+  const filtered = sourceList.filter(item => item.toLowerCase().includes(query.toLowerCase()));
+
+  if (filtered.length === 0) {
+    const empty = document.createElement('div');
+    empty.style.padding = '12px';
+    empty.style.color = 'var(--text-muted)';
+    empty.style.fontSize = '11px';
+    empty.style.textAlign = 'center';
+    empty.textContent = 'No matches found';
+    listEl.appendChild(empty);
+    return;
+  }
+
+  filtered.forEach(item => {
+    const isChecked = selectedSet.has(item);
+    const option = document.createElement('div');
+    option.className = `multiselect-option ${isChecked ? 'selected' : ''}`;
+    option.dataset.value = item;
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = isChecked;
+
+    const label = document.createElement('span');
+    label.textContent = item;
+
+    option.appendChild(checkbox);
+    option.appendChild(label);
+
+    // Toggle selection on click
+    option.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const check = option.querySelector('input[type="checkbox"]');
+      
+      // If we clicked the option div but not the checkbox directly, toggle checkbox state
+      if (e.target !== check) {
+        check.checked = !check.checked;
+      }
+
+      if (check.checked) {
+        selectedSet.add(item);
+        option.classList.add('selected');
+      } else {
+        selectedSet.delete(item);
+        option.classList.remove('selected');
+      }
+
+      updateMultiselectTrigger(type);
+      
+      // Clear selection to avoid layout mismatches
+      state.selectedAppIds.clear();
+      state.lastSelectedAppId = null;
+      
+      renderDashboard();
+    });
+
+    listEl.appendChild(option);
+  });
+}
+
+// Filter the options inside dropdown in real-time
+function filterMultiselectOptions(type, query) {
+  renderMultiselectOptions(type, query);
+}
+
+// Update trigger display with selected tags/genres count or pills
+function updateMultiselectTrigger(type) {
+  let triggerEl, placeholderEl, pillsEl, selectedSet;
+  if (type === 'tags') {
+    triggerEl = elements.tagsTrigger;
+    placeholderEl = elements.tagsPlaceholder;
+    pillsEl = elements.tagsSelectedPills;
+    selectedSet = state.selectedTags;
+  } else if (type === 'genres') {
+    triggerEl = elements.genresTrigger;
+    placeholderEl = elements.genresPlaceholder;
+    pillsEl = elements.genresSelectedPills;
+    selectedSet = state.selectedGenres;
+  } else if (type === 'reviews') {
+    triggerEl = elements.reviewsTrigger;
+    placeholderEl = elements.reviewsPlaceholder;
+    pillsEl = elements.reviewsSelectedPills;
+    selectedSet = state.selectedReviews;
+  } else if (type === 'ratings') {
+    triggerEl = elements.ratingsTrigger;
+    placeholderEl = elements.ratingsPlaceholder;
+    pillsEl = elements.ratingsSelectedPills;
+    selectedSet = state.selectedRatings;
+  } else if (type === 'metacritic') {
+    triggerEl = elements.metacriticTrigger;
+    placeholderEl = elements.metacriticPlaceholder;
+    pillsEl = elements.metacriticSelectedPills;
+    selectedSet = state.selectedMetacritic;
+  } else if (type === 'hltb') {
+    triggerEl = elements.hltbTrigger;
+    placeholderEl = elements.hltbPlaceholder;
+    pillsEl = elements.hltbSelectedPills;
+    selectedSet = state.selectedHLTB;
+  }
+
+  if (!triggerEl || !placeholderEl || !pillsEl) return;
+
+  if (selectedSet.size === 0) {
+    placeholderEl.classList.remove('hidden');
+    pillsEl.classList.add('hidden');
+    pillsEl.innerHTML = '';
+  } else {
+    placeholderEl.classList.add('hidden');
+    pillsEl.classList.remove('hidden');
+    pillsEl.innerHTML = '';
+
+    // Show pills up to 1 item, otherwise show "N selected"
+    if (selectedSet.size <= 1) {
+      selectedSet.forEach(val => {
+        const pill = document.createElement('span');
+        pill.className = 'multiselect-pill';
+        
+        if (type === 'reviews') {
+          const displayNames = {
+            '10k': '10k+ Reviews',
+            '9001-10k': '9,001-10k',
+            '8001-9k': '8,001-9k',
+            '7001-8k': '7,001-8k',
+            '6001-7k': '6,001-7k',
+            '5001-6k': '5,001-6k',
+            '4001-5k': '4,001-5k',
+            '3001-4k': '3,001-4k',
+            '2001-3k': '2,001-3k',
+            '1501-2k': '1,501-2k',
+            '1001-1500': '1,001-1.5k',
+            '501-1k': '501-1k',
+            '100-500': '100-500',
+            '1-100': '1-100',
+            'none': 'No Reviews'
+          };
+          pill.textContent = displayNames[val] || val;
+        } else if (type === 'ratings') {
+          const displayNames = {
+            '90-100': '90-100% Rating',
+            '80-89': '80-89% Rating',
+            '70-79': '70-79% Rating',
+            '60-69': '60-69% Rating',
+            '50-59': '50-59% Rating',
+            '0-49': '0-49% Rating',
+            'none': 'No Rating'
+          };
+          pill.textContent = displayNames[val] || val;
+        } else if (type === 'metacritic') {
+          const displayNames = {
+            '90-100': '90-100 Metacritic',
+            '80-89': '80-89 Metacritic',
+            '70-79': '70-79 Metacritic',
+            '60-69': '60-69 Metacritic',
+            '50-59': '50-59 Metacritic',
+            '0-49': '0-49 Metacritic',
+            'none': 'No Score'
+          };
+          pill.textContent = displayNames[val] || val;
+        } else if (type === 'hltb') {
+          const displayNames = {
+            '0-5': '< 5 hours',
+            '5-10': '5 – 10 hours',
+            '10-20': '10 – 20 hours',
+            '20-40': '20 – 40 hours',
+            '40+': '40+ hours'
+          };
+          pill.textContent = displayNames[val] || val;
+        } else {
+          pill.textContent = val;
+        }
+
+        const removeIcon = document.createElement('i');
+        removeIcon.className = 'fa-solid fa-xmark';
+        removeIcon.addEventListener('click', (e) => {
+          e.stopPropagation();
+          selectedSet.delete(val);
+          updateMultiselectTrigger(type);
+          
+          if (type === 'reviews') {
+            const checkbox = elements.reviewsOptionsList.querySelector(`input[value="${val}"]`);
+            if (checkbox) checkbox.checked = false;
+          } else if (type === 'ratings') {
+            const checkbox = elements.ratingsOptionsList.querySelector(`input[value="${val}"]`);
+            if (checkbox) checkbox.checked = false;
+          } else if (type === 'metacritic') {
+            const checkbox = elements.metacriticOptionsList.querySelector(`input[value="${val}"]`);
+            if (checkbox) checkbox.checked = false;
+          } else if (type === 'hltb') {
+            const checkbox = elements.hltbOptionsList.querySelector(`input[value="${val}"]`);
+            if (checkbox) checkbox.checked = false;
+          } else {
+            renderMultiselectOptions(type, type === 'tags' ? elements.tagsSearch.value : elements.genresSearch.value);
+          }
+          
+          state.selectedAppIds.clear();
+          state.lastSelectedAppId = null;
+          renderDashboard();
+        });
+
+        pill.appendChild(removeIcon);
+        pillsEl.appendChild(pill);
+      });
+    } else {
+      const summary = document.createElement('span');
+      summary.style.fontSize = '11px';
+      summary.style.fontWeight = '700';
+      summary.style.color = 'var(--accent-blue)';
+      summary.textContent = `${selectedSet.size} Selected`;
+      pillsEl.appendChild(summary);
+    }
+  }
+}
+

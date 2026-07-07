@@ -1,0 +1,11 @@
+{
+  "apiKey": "",
+  "steamId": "",
+  "webPort": 3000,
+  "electronPort": 3001,
+  "allowMultiFolderMembership": false,
+  "minimizeToTrayOnClose": true,
+  "startWithWindows": false,
+  "startMinimizedToTray": false,
+  "enableControllerShortcut": true
+}

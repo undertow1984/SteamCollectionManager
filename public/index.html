@@ -1,0 +1,925 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SteamCollectionManager - Manage Your Steam Collections and Library</title>
+  <meta name="description" content="A premium utility to view, categorize, and launch your Steam games from a clean dashboard.">
+  
+  <!-- Favicon -->
+  <link rel="icon" href="favicon.ico" type="image/x-icon" sizes="64x64">
+  <link rel="icon" type="image/png" href="favicon.png" sizes="64x64">
+  
+  <!-- Google Fonts: Outfit & Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  
+  <!-- Stylesheet -->
+  <link rel="stylesheet" href="style.css">
+  
+  <!-- FontAwesome Icons for gaming details -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+
+  <!-- Loading Overlay -->
+  <div id="loadingOverlay" class="loading-overlay hidden">
+    <div class="loader-content">
+      <div class="spinner"></div>
+      <p id="loadingText">Syncing your Steam Library...</p>
+    </div>
+  </div>
+
+  <div class="app-container">
+    
+    <!-- Sidebar -->
+    <aside class="sidebar collapsed">
+      <div class="sidebar-header">
+        <div class="logo">
+          <i class="fa-brands fa-steam logo-icon"></i>
+          <span>Steam<span class="highlight">Folders</span></span>
+        </div>
+      </div>
+
+
+
+      <div class="sidebar-section">
+        <div class="section-title">
+          <span>Folders</span>
+          <button id="btnNewFolder" class="add-folder-btn" title="Create New Folder">
+            <i class="fa-solid fa-plus"></i>
+          </button>
+        </div>
+        <ul id="folderNavList" class="folder-nav-list">
+          <!-- Populated dynamically -->
+        </ul>
+      </div>
+
+      <div class="sidebar-footer">
+        <div class="footer-actions">
+          <button id="btnRefresh" class="footer-icon-btn" title="Sync Library"><i class="fa-solid fa-rotate"></i></button>
+          <button id="btnSettings" class="footer-icon-btn" title="API Settings"><i class="fa-solid fa-cog"></i></button>
+          <button id="btnExportCollections" class="footer-icon-btn" title="Export to Steam"><i class="fa-solid fa-upload"></i></button>
+        </div>
+        <span class="version-text">v1.0.0</span>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      <!-- Top banner / Info bar -->
+      <header class="content-header">
+        <div style="display: flex; align-items: center; gap: 16px;">
+          <button id="btnToggleSidebar" class="header-toggle-btn" title="Expand Sidebar"><i class="fa-solid fa-angles-right"></i></button>
+          <div class="header-info">
+            <h1 id="activeViewTitle">All Games</h1>
+            <p id="libraryStats">0 games loaded</p>
+          </div>
+        </div>
+        <div class="header-controls">
+          <button id="btnHelp" class="view-btn" title="Help & Controller Guide"><i class="fa-solid fa-question-circle"></i></button>
+          <div class="search-box">
+            <i class="fa-solid fa-magnifying-glass search-icon"></i>
+            <input type="text" id="searchBar" placeholder="Search library...">
+            <button id="btnClearSearch" class="clear-search-btn hidden"><i class="fa-solid fa-xmark"></i></button>
+            <span class="tooltip-container" style="margin-left:4px; display:inline-flex; align-items:center;">
+              <i class="fa-solid fa-info-circle" style="font-size:11px; opacity:0.65; cursor:help;"></i>
+              <span class="tooltip-text" style="width:220px;">Type to filter the current view by game name. Press B on controller to clear. Supports partial matches.</span>
+            </span>
+          </div>
+          <select id="folderDropdown" class="folder-dropdown" title="Switch active folder"></select>
+          <span class="tooltip-container" style="margin-left:-6px; margin-right:6px; display:inline-flex; align-items:center;">
+            <i class="fa-solid fa-info-circle" style="font-size:11px; opacity:0.65; cursor:help;"></i>
+            <span class="tooltip-text" style="width:240px;">Select which folder/collection is currently active. Only games in the active folder are shown (except when viewing "All Games").</span>
+          </span>
+          <button id="btnToggleFilters" class="view-btn" title="Toggle Filters & Sort"><i class="fa-solid fa-filter"></i></button>
+          <button id="btnToggleSidecar" class="view-btn" title="Toggle Quick Move / Manage Panel"><i class="fa-solid fa-folder-tree"></i></button>
+          <button id="btnToggleMultiSelect" class="view-btn" title="Toggle Multi-Select Mode (Ctrl+Click also enables)"><i class="fa-solid fa-check-double"></i></button>
+          <button id="btnFullscreen" class="view-btn" title="Toggle Fullscreen"><i class="fa-solid fa-expand"></i></button>
+          <div class="view-toggles">
+            <button id="viewGrid" class="view-btn active" title="Grid View"><i class="fa-solid fa-grip"></i></button>
+            <button id="viewList" class="view-btn" title="List View"><i class="fa-solid fa-list"></i></button>
+          </div>
+        </div>
+      </header>
+
+      <!-- Grid/List View Toolbar Filters -->
+      <!-- Grid/List View Toolbar Filters -->
+      <div class="main-filters-bar collapsed">
+        <!-- Row 1: Primary Controls (always visible in filters bar) -->
+        <div class="filters-row primary-filters-row">
+          <!-- Group By -->
+          <div class="filter-group-horizontal" style="min-width: 140px;">
+            <span class="filter-label"><i class="fa-solid fa-layer-group"></i> Group By</span>
+            <select id="selectGroupBy" class="form-select">
+              <option value="none" selected>None</option>
+              <option value="genre">Genre</option>
+              <option value="playstate">Play State</option>
+              <option value="metacritic">Metacritic Score</option>
+              <option value="steamrating">Steam Rating</option>
+              <option value="controller">Controller Support</option>
+              <option value="year">Release Year</option>
+              <option value="hltb-main">How Long to Beat (Main)</option>
+            </select>
+            <span class="tooltip-container" style="margin-left:4px;">
+              <i class="fa-solid fa-info-circle" style="font-size:10px; opacity:0.6; cursor:help;"></i>
+              <span class="tooltip-text" style="width:200px;">Group the game grid by a category instead of a flat list. "None" shows everything together.</span>
+            </span>
+          </div>
+
+          <!-- Sort By -->
+          <div class="filter-group-horizontal" style="min-width: 175px;">
+            <span class="filter-label"><i class="fa-solid fa-sort"></i> Sort By</span>
+            <div style="display: flex; align-items: center; gap: 6px; width: 100%;">
+              <select id="selectSort" class="form-select" style="flex: 1;">
+                <option value="name" selected>Alphabetical</option>
+                <option value="playtime">Hours Played</option>
+                <option value="dateadded">Date Added to Library</option>
+                <option value="metacritic">Metacritic Score</option>
+                <option value="reviews">Steam Rating</option>
+                <option value="reviewcount">Steam Reviews</option>
+                <option value="lastplayed">Last Played</option>
+                <option value="year">Release Year</option>
+                <option value="hltb-main">How Long to Beat (Main)</option>
+              </select>
+              <button id="btnToggleSortDirection" title="Reverse Sort Direction">
+                <i class="fa-solid fa-arrow-down-short-wide"></i>
+              </button>
+            </div>
+            <span class="tooltip-container" style="margin-left:4px;">
+              <i class="fa-solid fa-info-circle" style="font-size:10px; opacity:0.6; cursor:help;"></i>
+              <span class="tooltip-text" style="width:220px;">Choose the primary sort order for games in the current view. Direction can be reversed with the arrow button.</span>
+            </span>
+          </div>
+
+          <!-- How Long to Beat (Main Story) -->
+          <div class="filter-group-horizontal multiselect-group" id="hltbFilterGroup">
+            <span class="filter-label"><i class="fa-solid fa-gamepad"></i> How Long to Beat</span>
+            <div class="multiselect-container" id="multiselectHLTB">
+              <div class="multiselect-trigger" id="hltbTrigger">
+                <span class="multiselect-placeholder" id="hltbPlaceholder">Any Length</span>
+                <div class="multiselect-selected-pills hidden" id="hltbSelectedPills"></div>
+                <i class="fa-solid fa-chevron-down multiselect-arrow"></i>
+              </div>
+              <div class="multiselect-dropdown hidden" id="hltbDropdown">
+                <div class="multiselect-options-list" id="hltbOptionsList">
+                  <label class="multiselect-option">
+                    <input type="checkbox" value="0-5">
+                    <span>&lt; 5 hours</span>
+                  </label>
+                  <label class="multiselect-option">
+                    <input type="checkbox" value="5-10">
+                    <span>5 – 10 hours</span>
+                  </label>
+                  <label class="multiselect-option">
+                    <input type="checkbox" value="10-20">
+                    <span>10 – 20 hours</span>
+                  </label>
+                  <label class="multiselect-option">
+                    <input type="checkbox" value="20-40">
+                    <span>20 – 40 hours</span>
+                  </label>
+                  <label class="multiselect-option">
+                    <input type="checkbox" value="40+">
+                    <span>40+ hours</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Genres -->
+          <div class="filter-group-horizontal multiselect-group" id="genresFilterGroup">
+            <span class="filter-label"><i class="fa-solid fa-shapes"></i> Genres</span>
+            <div class="multiselect-container" id="multiselectGenres">
+              <div class="multiselect-trigger" id="genresTrigger">
+                <span class="multiselect-placeholder" id="genresPlaceholder">All Genres</span>
+                <div class="multiselect-selected-pills hidden" id="genresSelectedPills"></div>
+                <i class="fa-solid fa-chevron-down multiselect-arrow"></i>
+              </div>
+              <div class="multiselect-dropdown hidden" id="genresDropdown">
+                <input type="text" class="multiselect-search" id="genresSearch" placeholder="Search genres...">
+                <div class="multiselect-options-list" id="genresOptionsList">
+                  <!-- populated dynamically -->
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Tags -->
+          <div class="filter-group-horizontal multiselect-group" id="tagsFilterGroup">
+            <span class="filter-label"><i class="fa-solid fa-tags"></i> Tags</span>
+            <div class="multiselect-container" id="multiselectTags">
+              <div class="multiselect-trigger" id="tagsTrigger">
+                <span class="multiselect-placeholder" id="tagsPlaceholder">All Tags</span>
+                <div class="multiselect-selected-pills hidden" id="tagsSelectedPills"></div>
+                <i class="fa-solid fa-chevron-down multiselect-arrow"></i>
+              </div>
+              <div class="multiselect-dropdown hidden" id="tagsDropdown">
+                <input type="text" class="multiselect-search" id="tagsSearch" placeholder="Search tags...">
+                <div class="multiselect-options-list" id="tagsOptionsList">
+                  <!-- populated dynamically -->
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Actions: Clear Filters -->
+          <div class="filter-actions-group">
+            <button type="button" class="btn btn-secondary btn-sm hidden" id="btnClearAllFilters" title="Clear all active filters" style="padding: 6px 12px; font-size: 11px; font-weight: 700; border-radius: var(--radius-sm); border: 1px dashed rgba(231, 76, 60, 0.4); color: #ff7675; background: rgba(231, 76, 60, 0.05);">
+              <i class="fa-solid fa-filter-circle-xmark"></i> Reset
+            </button>
+          </div>
+        </div>
+
+        <!-- Row 2: Advanced Metadata Filters -->
+        <div class="filters-row advanced-filters-row" id="advancedFiltersRow">
+          <!-- Installation -->
+          <div class="filter-group-horizontal filter-group-tristate">
+            <span class="filter-label"><i class="fa-solid fa-download"></i> Installed</span>
+            <button class="tristate-btn" id="filterInstalled" data-state="on" title="Installed / All / Uninstalled">
+              <i class="fa-solid fa-check"></i>
+            </button>
+          </div>
+
+          <!-- Controller -->
+          <div class="filter-group-horizontal filter-group-tristate">
+            <span class="filter-label"><i class="fa-solid fa-gamepad"></i> Controller</span>
+            <button class="tristate-btn" id="filterController" data-state="all" title="Supported / All / Unsupported">
+              <i class="fa-solid fa-minus"></i>
+            </button>
+          </div>
+
+          <!-- VR Support -->
+          <div class="filter-group-horizontal filter-group-tristate">
+            <span class="filter-label"><i class="fa-solid fa-vr-cardboard"></i> VR</span>
+            <button class="tristate-btn" id="filterVR" data-state="off" title="VR Supported / All / Non-VR">
+              <i class="fa-solid fa-xmark"></i>
+            </button>
+          </div>
+
+          <!-- Metacritic -->
+          <div class="filter-group-horizontal multiselect-group" id="metacriticFilterGroup">
+            <span class="filter-label"><i class="fa-solid fa-star"></i> Metacritic</span>
+            <div class="multiselect-container" id="multiselectMetacritic">
+              <div class="multiselect-trigger" id="metacriticTrigger">
+                <span class="multiselect-placeholder" id="metacriticPlaceholder">All Scores</span>
+                <div class="multiselect-selected-pills hidden" id="metacriticSelectedPills"></div>
+                <i class="fa-solid fa-chevron-down multiselect-arrow"></i>
+              </div>
+              <div class="multiselect-dropdown hidden" id="metacriticDropdown">
+                <div class="multiselect-options-list" id="metacriticOptionsList">
+                  <label class="multiselect-option">
+                    <input type="checkbox" value="90-100">
+                    <span>90 - 100 (Outstanding)</span>
+                  </label>
+                  <label class="multiselect-option">
+                    <input type="checkbox" value="80-89">
+                    <span>80 - 89 (Very Good)</span>
+                  </label>
+                  <label class="multiselect-option">
+                    <input type="checkbox" value="70-79">
+                    <span>70 - 79 (Good)</span>
+                  </label>
+                  <label class="multiselect-option">
+                    <input type="checkbox" value="60-69">
+                    <span>60 - 69 (Above Average)</span>
+                  </label>
+                  <label class="multiselect-option">
+                    <input type="checkbox" value="50-59">
+                    <span>50 - 59 (Mixed)</span>
+                  </label>
+                  <label class="multiselect-option">
+                    <input type="checkbox" value="0-49">
+                    <span>0 - 49 (Negative)</span>
+                  </label>
+                  <label class="multiselect-option">
+                    <input type="checkbox" value="none">
+                    <span>No Score</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Steam Rating -->
+          <div class="filter-group-horizontal multiselect-group" id="ratingsFilterGroup">
+            <span class="filter-label"><i class="fa-solid fa-thumbs-up"></i> Rating</span>
+            <div class="multiselect-container" id="multiselectRatings">
+              <div class="multiselect-trigger" id="ratingsTrigger">
+                <span class="multiselect-placeholder" id="ratingsPlaceholder">All Ratings</span>
+                <div class="multiselect-selected-pills hidden" id="ratingsSelectedPills"></div>
+                <i class="fa-solid fa-chevron-down multiselect-arrow"></i>
+              </div>
+              <div class="multiselect-dropdown hidden" id="ratingsDropdown">
+                <div class="multiselect-options-list" id="ratingsOptionsList">
+                  <label class="multiselect-option">
+                    <input type="checkbox" value="90-100">
+                    <span>90% - 100% (Overwhelmingly Positive)</span>
+                  </label>
+                  <label class="multiselect-option">
+                    <input type="checkbox" value="80-89">
+                    <span>80% - 89% (Very Positive)</span>
+                  </label>
+                  <label class="multiselect-option">
+                    <input type="checkbox" value="70-79">
+                    <span>70% - 79% (Mostly Positive)</span>
+                  </label>
+                  <label class="multiselect-option">
+                    <input type="checkbox" value="60-69">
+                    <span>60% - 69% (Mixed)</span>
+                  </label>
+                  <label class="multiselect-option">
+                    <input type="checkbox" value="50-59">
+                    <span>50% - 59% (Mixed)</span>
+                  </label>
+                  <label class="multiselect-option">
+                    <input type="checkbox" value="0-49">
+                    <span>0% - 49% (Mostly Negative)</span>
+                  </label>
+                  <label class="multiselect-option">
+                    <input type="checkbox" value="none">
+                    <span>No Rating</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Reviews Count -->
+          <div class="filter-group-horizontal multiselect-group" id="reviewsFilterGroup">
+            <span class="filter-label"><i class="fa-solid fa-comments"></i> Reviews</span>
+            <div class="multiselect-container" id="multiselectReviews">
+              <div class="multiselect-trigger" id="reviewsTrigger">
+                <span class="multiselect-placeholder" id="reviewsPlaceholder">All Counts</span>
+                <div class="multiselect-selected-pills hidden" id="reviewsSelectedPills"></div>
+                <i class="fa-solid fa-chevron-down multiselect-arrow"></i>
+              </div>
+              <div class="multiselect-dropdown hidden" id="reviewsDropdown">
+                <div class="multiselect-options-list" id="reviewsOptionsList">
+                  <label class="multiselect-option">
+                    <input type="checkbox" value="10k">
+                    <span>10,000+ Reviews</span>
+                  </label>
+                  <label class="multiselect-option">
+                    <input type="checkbox" value="9001-10k">
+                    <span>9,001 - 10,000</span>
+                  </label>
+                  <label class="multiselect-option">
+                    <input type="checkbox" value="8001-9k">
+                    <span>8,001 - 9,000</span>
+                  </label>
+                  <label class="multiselect-option">
+                    <input type="checkbox" value="7001-8k">
+                    <span>7,001 - 8,000</span>
+                  </label>
+                  <label class="multiselect-option">
+                    <input type="checkbox" value="6001-7k">
+                    <span>6,001 - 7,000</span>
+                  </label>
+                  <label class="multiselect-option">
+                    <input type="checkbox" value="5001-6k">
+                    <span>5,001 - 6,000</span>
+                  </label>
+                  <label class="multiselect-option">
+                    <input type="checkbox" value="4001-5k">
+                    <span>4,001 - 5,000</span>
+                  </label>
+                  <label class="multiselect-option">
+                    <input type="checkbox" value="3001-4k">
+                    <span>3,001 - 4,000</span>
+                  </label>
+                  <label class="multiselect-option">
+                    <input type="checkbox" value="2001-3k">
+                    <span>2,001 - 3,000</span>
+                  </label>
+                  <label class="multiselect-option">
+                    <input type="checkbox" value="1501-2k">
+                    <span>1,501 - 2,000</span>
+                  </label>
+                  <label class="multiselect-option">
+                    <input type="checkbox" value="1001-1500">
+                    <span>1,001 - 1,500</span>
+                  </label>
+                  <label class="multiselect-option">
+                    <input type="checkbox" value="501-1k">
+                    <span>501 - 1,000</span>
+                  </label>
+                  <label class="multiselect-option">
+                    <input type="checkbox" value="100-500">
+                    <span>100 - 500</span>
+                  </label>
+                  <label class="multiselect-option">
+                    <input type="checkbox" value="1-100">
+                    <span>1 - 100</span>
+                  </label>
+                  <label class="multiselect-option">
+                    <input type="checkbox" value="none">
+                    <span>No Reviews</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Main viewport wrapper -->
+      <div class="main-viewport-wrapper">
+        <!-- Main viewport -->
+        <div id="mainView" class="main-view grid-mode">
+          
+          <!-- Setup Prompt (shown if not configured) -->
+          <div id="setupPrompt" class="setup-prompt hidden">
+            <div class="setup-card">
+              <div class="setup-icon-wrapper">
+                <i class="fa-brands fa-steam"></i>
+              </div>
+              <h2>Welcome to SteamCollectionManager</h2>
+              <p>To view and organize your Steam games, please configure your Steam Web API Key and SteamID.</p>
+              <button id="btnSetupConfig" class="btn btn-primary">
+                <i class="fa-solid fa-key"></i> Setup Credentials
+              </button>
+            </div>
+          </div>
+
+          <!-- Empty library state (configured but no games returned) -->
+          <div id="emptyLibraryState" class="empty-state hidden">
+            <div class="empty-card">
+              <i class="fa-solid fa-ghost empty-icon"></i>
+              <h2>No Games Found</h2>
+              <p>We couldn't retrieve any games from your Steam ID. Please ensure your Steam Profile settings are set to **Public** (specifically "Game details").</p>
+              <button id="btnEmptyRefresh" class="btn btn-primary">
+                <i class="fa-solid fa-rotate"></i> Try Refreshing
+              </button>
+            </div>
+          </div>
+
+          <!-- Folders & Games Container (rendered dynamically) -->
+          <div id="foldersContainer" class="folders-container">
+            <!-- Dynamically generated folders & game cards -->
+          </div>
+
+        </div>
+
+        <!-- Alphabet Sidebar Index -->
+        <div class="alphabet-sidebar" id="alphabetSidebar">
+          <!-- Populated dynamically -->
+        </div>
+      </div>
+    </main>
+
+  </div>
+
+  <!-- Settings Modal -->
+  <div id="settingsModal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3><i class="fa-solid fa-cog"></i> Settings</h3>
+        <button id="btnCloseSettings" class="close-modal-btn"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <form id="settingsForm">
+        <div class="form-group">
+          <label for="inputApiKey">
+            Steam Web API Key 
+            <span class="tooltip-container">
+              <i class="fa-solid fa-info-circle" style="font-size:11px; opacity:0.7;"></i>
+              <span class="tooltip-text">Required to fetch your game list. Get it at steamcommunity.com/dev</span>
+            </span>
+          </label>
+          <input type="password" id="inputApiKey" placeholder="Enter your 32-character API Key" required autocomplete="off">
+          <div class="input-helper">
+            Get your key from the <a href="https://steamcommunity.com/dev" target="_blank" rel="noopener noreferrer">Steam Web API page <i class="fa-solid fa-external-link-alt"></i></a>.
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="inputSteamId">
+            Steam ID64
+            <span class="tooltip-container">
+              <i class="fa-solid fa-circle-question"></i>
+              <span class="tooltip-text">A 17-digit number starting with 765611...</span>
+            </span>
+          </label>
+          <input type="text" id="inputSteamId" placeholder="e.g. 76561198012345678" required pattern="^[0-9]{17}$">
+          <div class="input-helper">
+            Find your 64-bit Steam ID using tools like <a href="https://steamid.io" target="_blank" rel="noopener noreferrer">steamid.io <i class="fa-solid fa-external-link-alt"></i></a> or check your profile URL.
+          </div>
+        </div>
+
+        <div style="margin: 10px 0 4px; font-size: 12px; font-weight: 600; color: var(--text-muted); border-top: 1px solid #333; padding-top: 8px;">Application Ports</div>
+
+        <div class="form-group">
+          <label for="inputWebPort">
+            Web Version Port
+            <span class="tooltip-container">
+              <i class="fa-solid fa-circle-question"></i>
+              <span class="tooltip-text">Port for running via browser (npm start / node server.mjs). Default: 3000</span>
+            </span>
+          </label>
+          <input type="number" id="inputWebPort" min="1024" max="65535" value="3000" required>
+          <div class="input-helper">Browser version uses http://localhost:PORT</div>
+        </div>
+
+        <div class="form-group">
+          <label for="inputElectronPort">
+            Electron Version Port
+            <span class="tooltip-container">
+              <i class="fa-solid fa-circle-question"></i>
+              <span class="tooltip-text">Port for the desktop Electron app. Default: 3001</span>
+            </span>
+          </label>
+          <input type="number" id="inputElectronPort" min="1024" max="65535" value="3001" required>
+          <div class="input-helper">Change requires restarting the app to take effect.</div>
+        </div>
+
+        <div class="modal-alert">
+          <i class="fa-solid fa-circle-info"></i>
+          <div>
+            <strong>Important Profile Privacy:</strong> Your Steam profile's <strong>"Game details"</strong> must be set to <strong>Public</strong> in your Steam Privacy Settings for this utility to load your games.
+          </div>
+        </div>
+
+        <div style="margin: 10px 0 4px; font-size: 12px; font-weight: 600; color: var(--text-muted); border-top: 1px solid #333; padding-top: 8px;">Library Behavior</div>
+
+        <div class="form-group" style="display: flex; align-items: flex-start; gap: 14px; padding: 10px 0 4px;">
+          <div style="flex-shrink: 0; padding-top: 2px;">
+            <label class="toggle-switch" title="Allow a game to appear in more than one folder simultaneously">
+              <input type="checkbox" id="checkAllowMultiFolder">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div>
+            <div style="font-size: 14px; font-weight: 500; color: var(--text-bright); margin-bottom: 3px;">
+              Allow games in multiple folders
+              <span class="tooltip-container" style="margin-left: 4px;">
+                <i class="fa-solid fa-circle-question" style="font-size: 12px;"></i>
+                <span class="tooltip-text">When enabled, games can belong to more than one normal folder at the same time. Moving or saving a view will not remove the game from its current folder(s). Dynamic folders are always independent.</span>
+              </span>
+            </div>
+            <div class="input-helper" style="margin-top: 0;">When off (default), each game lives in exactly one folder — moving it removes it from its previous folder. When on, folders act like tags and a game can appear in many folders.</div>
+          </div>
+        </div>
+
+        <!-- Desktop Integration (Tray and Auto-Start) -->
+        <div id="desktopSettingsSection" class="hidden">
+          <div style="margin: 10px 0 4px; font-size: 12px; font-weight: 600; color: var(--text-muted); border-top: 1px solid #333; padding-top: 8px;">Desktop Integration</div>
+          
+          <div class="form-group" style="display: flex; align-items: flex-start; gap: 14px; padding: 10px 0 4px;">
+            <div style="flex-shrink: 0; padding-top: 2px;">
+              <label class="toggle-switch" title="Minimize application to System Tray instead of closing when clicking the Close (X) button">
+                <input type="checkbox" id="checkMinimizeToTray">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <div>
+              <div style="font-size: 14px; font-weight: 500; color: var(--text-bright); margin-bottom: 3px;">
+                Minimize to System Tray on close
+              </div>
+              <div class="input-helper" style="margin-top: 0;">When enabled, clicking the close (X) button hides the window and keeps it running in the taskbar notification area. Double-click the tray icon to restore.</div>
+            </div>
+          </div>
+
+          <div class="form-group" style="display: flex; align-items: flex-start; gap: 14px; padding: 10px 0 4px;">
+            <div style="flex-shrink: 0; padding-top: 2px;">
+              <label class="toggle-switch" title="Automatically launch SteamCollectionManager when Windows boots">
+                <input type="checkbox" id="checkStartWithWindows">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <div>
+              <div style="font-size: 14px; font-weight: 500; color: var(--text-bright); margin-bottom: 3px;">
+                Start with Windows
+              </div>
+              <div class="input-helper" style="margin-top: 0;">Automatically run the application when you log into Windows.</div>
+            </div>
+          </div>
+
+          <div class="form-group" style="display: flex; align-items: flex-start; gap: 14px; padding: 10px 0 4px;">
+            <div style="flex-shrink: 0; padding-top: 2px;">
+              <label class="toggle-switch" title="When starting at Windows boot, start hidden in the System Tray">
+                <input type="checkbox" id="checkStartMinimized">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <div>
+              <div style="font-size: 14px; font-weight: 500; color: var(--text-bright); margin-bottom: 3px;">
+                Start minimized to System Tray
+              </div>
+              <div class="input-helper" style="margin-top: 0;">When booting Windows, keep the application window hidden and start it directly as a tray icon.</div>
+            </div>
+          </div>
+
+          <div class="form-group" style="display: flex; align-items: flex-start; gap: 14px; padding: 10px 0 4px;">
+            <div style="flex-shrink: 0; padding-top: 2px;">
+              <label class="toggle-switch" title="Hold Left Thumbstick + Right Trigger on the controller for 2 seconds to toggle fullscreen/unminimize">
+                <input type="checkbox" id="checkEnableControllerShortcut">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <div>
+              <div style="font-size: 14px; font-weight: 500; color: var(--text-bright); margin-bottom: 3px;">
+                Enable controller global shortcut
+              </div>
+              <div class="input-helper" style="margin-top: 0;">Hold Left Thumbstick + Right Trigger for 2 seconds on the controller to toggle the application between fullscreen, hidden, and active states.</div>
+            </div>
+          </div>
+        </div>
+
+        <div style="margin: 10px 0 4px; font-size: 12px; font-weight: 600; color: var(--text-muted); border-top: 1px solid #333; padding-top: 8px;">Cached Data</div>
+        <div id="cacheStatusSection">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <span style="font-size: 12px; font-weight: 600;">Cache Status</span>
+            <button type="button" id="btnRefreshAllCaches" class="btn btn-secondary" style="font-size: 10px; padding: 2px 6px;">Refresh All</button>
+          </div>
+          <div id="cacheList" style="font-size: 11px;"></div>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" id="btnCancelSettings" class="btn btn-secondary">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save Settings</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Folder Create/Rename Modal -->
+  <div id="folderModal" class="modal-overlay hidden">
+    <div class="modal-card modal-small">
+      <div class="modal-header">
+        <h3 id="folderModalTitle">Create Folder</h3>
+        <button id="btnCloseFolderModal" class="close-modal-btn"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <form id="folderForm">
+        <div class="form-group">
+          <label for="inputFolderName">Folder Name <span class="tooltip-container"><i class="fa-solid fa-info-circle" style="font-size:10px; opacity:0.65;"></i><span class="tooltip-text" style="width:200px;">Name of the static folder. Games can be moved into it manually or via controller.</span></span></label>
+          <input type="text" id="inputFolderName" placeholder="e.g. Backlog, Playing, Masterpieces" required maxlength="32">
+        </div>
+        <div class="modal-footer">
+          <button type="button" id="btnCancelFolder" class="btn btn-secondary">Cancel</button>
+          <button type="submit" id="btnSubmitFolder" class="btn btn-primary">Create</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Help & Controls Modal -->
+  <div id="helpModal" class="modal-overlay hidden">
+    <div class="modal-card" style="max-width: 720px;">
+      <div class="modal-header">
+        <h3><i class="fa-solid fa-question-circle"></i> Help & Controls</h3>
+        <button id="btnCloseHelp" class="close-modal-btn"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div class="help-content" style="max-height: 65vh; overflow-y: auto; padding: 4px 8px;">
+        
+        <h4 style="margin: 12px 0 6px; color: var(--text-bright);">Controller Button Mappings</h4>
+        <div style="background: rgba(0,0,0,0.2); padding: 10px; border-radius: 6px; font-size: 13px; line-height: 1.5;">
+          <table style="width:100%; border-collapse: collapse;">
+            <tr><td style="padding:3px 8px; font-weight:600; width:120px;"><strong>A (South)</strong></td><td style="padding:3px 8px;">Activate / Select focused item. Opens game options on cards. Confirms selections in modals & dropdowns. Opens virtual keyboard on text fields. <em>Long-press A</em> on a card enters multi-select mode.</td></tr>
+            <tr><td style="padding:3px 8px; font-weight:600;"><strong>B (East)</strong></td><td style="padding:3px 8px;">Cancel / Back / Close current modal, dropdown, sidecar, filters, or virtual keyboard. Exits multi-select mode. Fallback: clears active search or selections.</td></tr>
+            <tr><td style="padding:3px 8px; font-weight:600;"><strong>X (West)</strong></td><td style="padding:3px 8px;">Toggle focus between main game grid and top header controls (search box, folder dropdown, view buttons). Press again to return to grid.</td></tr>
+            <tr><td style="padding:3px 8px; font-weight:600;"><strong>Y (North)</strong></td><td style="padding:3px 8px;">Toggle the full Filters & Sort panel open or closed (and focus it when opening).</td></tr>
+            <tr><td style="padding:3px 8px; font-weight:600;"><strong>LB (Left Bumper)</strong></td><td style="padding:3px 8px;">Open/focus left sidebar (folder navigation). From sidebar, returns focus to main grid.</td></tr>
+            <tr><td style="padding:3px 8px; font-weight:600;"><strong>RB (Right Bumper)</strong></td><td style="padding:3px 8px;">Open/focus right sidecar (Quick Move / Manage panel). From sidecar, returns focus to main grid.</td></tr>
+            <tr><td style="padding:3px 8px; font-weight:600;"><strong>LT (Left Trigger)</strong></td><td style="padding:3px 8px;">Modifier for multi-select (used together with A for shift-like selection behavior).</td></tr>
+            <tr><td style="padding:3px 8px; font-weight:600;"><strong>Back / Select</strong></td><td style="padding:3px 8px;">Instantly open the Change Folder dialog.</td></tr>
+            <tr><td style="padding:3px 8px; font-weight:600;"><strong>LS (Click) + RT</strong></td><td style="padding:3px 8px;">Hold for 2 seconds to toggle fullscreen or unminimize the application globally (if enabled in settings).</td></tr>
+            <tr><td style="padding:3px 8px; font-weight:600;"><strong>Left Stick / D-Pad</strong></td><td style="padding:3px 8px;">Navigate focus up/down/left/right across cards, folders, buttons, and panels.</td></tr>
+            <tr><td style="padding:3px 8px; font-weight:600;"><strong>Right Stick</strong></td><td style="padding:3px 8px;">Smooth scroll the active view (main grid, sidecar, modal content, etc.).</td></tr>
+          </table>
+          <p style="margin-top:8px; font-size:12px; opacity:0.8;">Tip: When a text field is focused, A will open the on-screen virtual keyboard for controller text entry.</p>
+        </div>
+
+        <h4 style="margin: 16px 0 6px; color: var(--text-bright);">Extra Settings (Settings Modal)</h4>
+        <div style="background: rgba(0,0,0,0.2); padding: 10px; border-radius: 6px; font-size: 13px; line-height: 1.45;">
+          <p><strong>Steam Web API Key</strong> — Required to fetch your owned games list from Steam. You can generate one for free at <a href="https://steamcommunity.com/dev/apikey" target="_blank">steamcommunity.com/dev</a>. The key is stored locally and never sent anywhere except to Steam's official API.</p>
+          <p><strong>Steam ID64</strong> — Your 17-digit Steam ID (usually starts with 76561198...). You can look it up at sites like steamid.io or by viewing your profile URL.</p>
+          <p><strong>Web Version Port</strong> — The TCP port used when running the web server directly (e.g. <code>node server.mjs</code> or <code>npm start</code>). The web UI will be available at <code>http://localhost:PORT</code>. Default: 3000.</p>
+          <p><strong>Electron Version Port</strong> — Internal port used by the desktop Electron app. Changing this requires restarting the application. Default: 3001.</p>
+          <p><strong>Allow games in multiple folders</strong> — When turned on, the same game can belong to several normal (static) folders at the same time — they behave more like tags. When turned off (the default), moving a game to a different folder removes it from the previous one. Dynamic (rule-based) folders are always allowed to contain the same game as other folders regardless of this setting.</p>
+          <p><strong>Cached Data section</strong> — Shows status and "Refresh" / "Clear" buttons for background data (HLTB playtimes, Metacritic scores, reviews, media, licenses, etc.). Use these when you want to force an update without a full library refresh.</p>
+        </div>
+
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="btnCloseHelpFooter" class="btn btn-primary">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Confirmation Dialog (replaces native confirm() for full controller support) -->
+  <div id="confirmModal" class="modal-overlay hidden">
+    <div class="modal-card modal-small">
+      <div class="modal-header">
+        <h3 id="confirmModalTitle">Confirm</h3>
+      </div>
+      <div id="confirmModalMessage" class="confirm-message" style="padding: 10px 6px; white-space: pre-wrap; line-height: 1.45; font-size: 13px;"></div>
+      <div class="modal-footer">
+        <button id="btnConfirmCancel" class="btn btn-secondary">Cancel</button>
+        <button id="btnConfirmOk" class="btn btn-primary">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Game Details Modal (opens from 3-dots menu on cover art; includes screenshots + videos from Steam API) -->
+  <div id="gameOptionsModal" class="modal-overlay hidden">
+    <div class="modal-card game-details-card">
+      <div class="modal-header">
+        <h3 id="gameOptionsTitle">Game Details</h3>
+        <button id="btnCloseGameOptions" class="close-modal-btn"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div class="game-details-body">
+        <!-- Top preview row with art + integrated info -->
+        <div class="game-info-preview game-details-preview">
+          <img id="gameOptionsImg" src="" alt="Game Artwork" class="game-options-img game-details-img">
+
+          <div class="preview-content">
+            <div class="preview-header">
+              <h4 id="gameOptionsName">Game Name</h4>
+              <div id="previewPlaytime" class="preview-playtime">0 hours played</div>
+              <div class="preview-meta">
+                <span id="previewDeveloper">—</span>
+                <span class="sep">•</span>
+                <span id="previewPublisher">—</span>
+              </div>
+            </div>
+
+            <div id="previewDescription" class="preview-desc">—</div>
+
+            <div class="preview-pills">
+              <div id="previewGenres" class="pills-container genres"></div>
+              <div id="previewTags" class="pills-container tags"></div>
+            </div>
+
+            <div id="previewHLTB" class="preview-hltb"></div>
+
+            <div class="game-details-quick-actions">
+              <button id="btnLaunchFromOptions" class="btn btn-primary"><i class="fa-solid fa-play"></i> Launch</button>
+              <button id="btnUninstallFromOptions" class="btn btn-danger hidden"><i class="fa-solid fa-trash-can"></i> Uninstall</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Screenshots & Videos from Steam Store API -->
+        <div class="game-media-section">
+          <div class="media-section-header">
+            <i class="fa-solid fa-video"></i>
+            <span>Trailers &amp; Videos</span>
+          </div>
+          <div id="videoPlayerContainer" class="video-player-container hidden">
+            <video id="detailVideoEl" playsinline></video>
+            <div class="custom-video-controls" id="customVideoControls">
+              <button type="button" class="video-btn" id="btnVideoPlayPause" title="Play/Pause"><i class="fa-solid fa-pause"></i></button>
+              <button type="button" class="video-btn" id="btnVideoRewind" title="Rewind 10s"><i class="fa-solid fa-backward-step"></i></button>
+              <button type="button" class="video-btn" id="btnVideoForward" title="Forward 10s"><i class="fa-solid fa-forward-step"></i></button>
+              <button type="button" class="video-btn" id="btnVideoMute" title="Mute/Unmute"><i class="fa-solid fa-volume-high"></i></button>
+              <button type="button" class="video-btn" id="btnVideoFullscreen" title="Fullscreen"><i class="fa-solid fa-expand"></i></button>
+            </div>
+            <button id="btnCloseVideo" class="btn-close-video" title="Close video"><i class="fa-solid fa-times"></i></button>
+          </div>
+          <div id="videosContainer" class="videos-container">
+            <!-- Populated by JS: video thumbnail cards -->
+          </div>
+
+          <div class="media-section-header" style="margin-top: 18px;">
+            <i class="fa-solid fa-images"></i>
+            <span>Screenshots</span>
+          </div>
+          <div id="screenshotsContainer" class="screenshots-container">
+            <!-- Populated by JS: clickable thumbnails -->
+          </div>
+          <div class="media-hint">Click a screenshot to enlarge. Click a video thumbnail to play.</div>
+        </div>
+
+        <!-- Folder management -->
+        <div class="form-group select-folder-group" style="margin-top: 8px; margin-bottom: 4px;">
+          <label for="selectFolderMove">Move to Folder</label>
+          <select id="selectFolderMove" class="form-select">
+            <!-- Populated dynamically -->
+          </select>
+        </div>
+      </div>
+      <div class="modal-footer" style="display: flex; gap: 10px; width: 100%;">
+        <button id="btnCloseDetails" class="btn btn-secondary" style="flex: 1;">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Simple Screenshot Lightbox -->
+  <div id="mediaLightbox" class="media-lightbox hidden">
+    <div class="lightbox-backdrop"></div>
+    <div class="lightbox-content">
+      <button class="lightbox-close" id="lightboxCloseBtn" title="Close"><i class="fa-solid fa-times"></i></button>
+      <button class="lightbox-nav lightbox-prev" id="lightboxPrevBtn" title="Previous"><i class="fa-solid fa-chevron-left"></i></button>
+      <img id="lightboxImage" alt="Screenshot" />
+      <button class="lightbox-nav lightbox-next" id="lightboxNextBtn" title="Next"><i class="fa-solid fa-chevron-right"></i></button>
+      <div class="lightbox-counter" id="lightboxCounter"></div>
+    </div>
+  </div>
+
+  <!-- Virtual On-Screen Keyboard (controller friendly, nested in app) -->
+  <div id="virtualKeyboard" class="virtual-keyboard hidden">
+    <div class="vk-header">
+      <span>On-Screen Keyboard</span>
+      <button class="vk-close" id="vkCloseBtn" title="Close Keyboard"><i class="fa-solid fa-times"></i></button>
+    </div>
+    <div class="vk-rows">
+      <!-- Row 1: Numbers -->
+      <div class="vk-row">
+        <button class="vk-key" data-key="1">1</button>
+        <button class="vk-key" data-key="2">2</button>
+        <button class="vk-key" data-key="3">3</button>
+        <button class="vk-key" data-key="4">4</button>
+        <button class="vk-key" data-key="5">5</button>
+        <button class="vk-key" data-key="6">6</button>
+        <button class="vk-key" data-key="7">7</button>
+        <button class="vk-key" data-key="8">8</button>
+        <button class="vk-key" data-key="9">9</button>
+        <button class="vk-key" data-key="0">0</button>
+        <button class="vk-key vk-special" data-key="backspace">⌫</button>
+      </div>
+      <!-- Row 2: QWERTY -->
+      <div class="vk-row">
+        <button class="vk-key" data-key="q">q</button>
+        <button class="vk-key" data-key="w">w</button>
+        <button class="vk-key" data-key="e">e</button>
+        <button class="vk-key" data-key="r">r</button>
+        <button class="vk-key" data-key="t">t</button>
+        <button class="vk-key" data-key="y">y</button>
+        <button class="vk-key" data-key="u">u</button>
+        <button class="vk-key" data-key="i">i</button>
+        <button class="vk-key" data-key="o">o</button>
+        <button class="vk-key" data-key="p">p</button>
+      </div>
+      <!-- Row 3: ASDF -->
+      <div class="vk-row">
+        <button class="vk-key" data-key="a">a</button>
+        <button class="vk-key" data-key="s">s</button>
+        <button class="vk-key" data-key="d">d</button>
+        <button class="vk-key" data-key="f">f</button>
+        <button class="vk-key" data-key="g">g</button>
+        <button class="vk-key" data-key="h">h</button>
+        <button class="vk-key" data-key="j">j</button>
+        <button class="vk-key" data-key="k">k</button>
+        <button class="vk-key" data-key="l">l</button>
+        <button class="vk-key vk-special" data-key="enter">↵</button>
+      </div>
+      <!-- Row 4: ZXCV + shift -->
+      <div class="vk-row">
+        <button class="vk-key vk-special" data-key="shift">⇧</button>
+        <button class="vk-key" data-key="z">z</button>
+        <button class="vk-key" data-key="x">x</button>
+        <button class="vk-key" data-key="c">c</button>
+        <button class="vk-key" data-key="v">v</button>
+        <button class="vk-key" data-key="b">b</button>
+        <button class="vk-key" data-key="n">n</button>
+        <button class="vk-key" data-key="m">m</button>
+        <button class="vk-key" data-key=",">,</button>
+        <button class="vk-key" data-key=".">.</button>
+        <button class="vk-key vk-special" data-key="shift">⇧</button>
+      </div>
+      <!-- Row 5: Space + close -->
+      <div class="vk-row vk-row-wide">
+        <button class="vk-key vk-space" data-key=" ">Space</button>
+        <button class="vk-key vk-special" data-key="close">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Game Running Overlay (browser-friendly "minimize" experience) -->
+  <div id="gameRunningOverlay" class="game-running-overlay hidden">
+    <div class="game-running-card">
+      <i class="fa-solid fa-gamepad game-running-icon"></i>
+      <h2>Game Launched</h2>
+      <p id="gameRunningName">Your game is running via Steam.</p>
+      <p class="game-running-hint">This tab will automatically return to your library when the game ends.</p>
+      <button id="btnReturnToLibrary" class="btn btn-primary">Return to Library Now</button>
+    </div>
+  </div>
+
+  <!-- Quick Move Sidecar Panel -->
+  <div id="sidecarPanel" class="sidecar-panel closed">
+    <div class="sidecar-header">
+      <div class="sidecar-header-left">
+        <h3><i class="fa-solid fa-folder-open"></i> Quick Move</h3>
+        <button id="btnSidecarNewFolder" class="add-folder-btn" title="Create New Folder"><i class="fa-solid fa-plus"></i></button>
+      </div>
+      <button id="btnCloseSidecar" class="close-sidecar-btn" title="Close Panel"><i class="fa-solid fa-angles-right"></i></button>
+    </div>
+    <div class="sidecar-body">
+      <button id="btnSidecarSaveView" class="sidecar-save-view-btn" title="Save current filtered view as a new folder">Save View</button>
+      <p id="sidecarTargetText" class="sidecar-target-text">Move selected games to:</p>
+      <ul id="sidecarFolderList" class="sidecar-folder-list">
+        <!-- Folders populated dynamically -->
+      </ul>
+    </div>
+  </div>
+
+  <!-- HLS.js for adaptive video streams (needed for Steam trailers in Electron/browser) -->
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+
+  <!-- Application script -->
+  <script src="app.js?v=37"></script>
+</body>
+</html>
