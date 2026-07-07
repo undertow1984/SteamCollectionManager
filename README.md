@@ -2,6 +2,9 @@
 A utility to manage large steam libraries.  Front End Launcher. Collections Manager.<br><br>
 This is alpha software expect bugs.  If you have already spent a tremendous amount of effort working on collections manually or otherwise this tool may not be for you, or maybe it is!? I just say this to warn that this tool WILL modify your collections so please don't be angry at me if you don't head this warning now and it ends up undoing something you've already spent a lot time working on :)
 
+<img width="3077" height="1692" alt="1" src="https://github.com/user-attachments/assets/e795bb12-4daf-43d8-93e3-14ad148f2402" />
+
+
 <h1>Installation</h1>
 From cmd/terminal/powershell<br/><br/>
 
