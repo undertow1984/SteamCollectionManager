@@ -13,8 +13,9 @@ let state = {
   lastSelectedAppId: null, // Tracks anchor for Shift + Click
   expandedTreeFolders: new Set(), // Tracks expanded folders in sidebar
   sidecarMoveAppIds: [], // Tracks targeted games for Quick Move
-  controllerFocusArea: 'main', // 'left' (sidebar/folders), 'main' (game grid/art), 'right' (sidecar)
+  controllerFocusArea: 'main', // 'left' (sidebar/folders), 'main' (game grid/art), 'right' (sidecar), 'main_inner' (inside game card buttons)
   controllerFocusIndex: 0, // Focused item index
+  controllerFocusInnerIndex: 0, // Focused inner button index
   sidecarFocusIndex: 0, // Focused folder index inside Sidecar panel
   sortBy: 'name', // 'name', 'metacritic', 'reviews', 'lastplayed'
   sortDirection: 'asc', // 'asc' or 'desc'
@@ -4827,6 +4828,11 @@ let gamepadLoopId = null;
 const prevButtons = {};
 let axisCooldown = 0;
 let aPressStart = 0;
+let ltLastPressTime = 0;
+let ltLastReleaseTime = 0;
+let ltDoubleTapHoldStart = 0;
+const DOUBLE_TAP_WINDOW = 400;
+const DOUBLE_TAP_HOLD_TIME = 3000;
 let lastControllerLT = false;
 let lastMainGridIndex = 0;  // remember last focused game card for returning to grid
 let lastMainGridAppId = null; // better: remember by appid so we can find it after filter/sort changes
@@ -4884,6 +4890,7 @@ function gamepadLoop() {
 // Process buttons & axis movements
 function handleGamepadInput(gp) {
   lastInputDevice = 'controller';
+  lastControllerLT = !!(gp.buttons[6] && (gp.buttons[6].pressed || (typeof gp.buttons[6].value === 'number' && gp.buttons[6].value > 0.5)));
 
   // If video player open, any controller input should keep controls visible
   // (actual "use" detection is also done in trigger* and rstick below)
@@ -4917,6 +4924,28 @@ function handleGamepadInput(gp) {
     }
   }
 
+  // Check A button long press for inner focus mode
+  if (aPressStart > 0) {
+    const aBtn = gp.buttons[0];
+    const isAPressed = aBtn && (aBtn.pressed || (typeof aBtn.value === 'number' && aBtn.value > 0.5));
+    if (isAPressed) {
+      if (Date.now() - aPressStart >= 500) {
+        if (state.controllerFocusArea === 'main') {
+          const mainEls = getMainElements();
+          const target = mainEls[state.controllerFocusIndex];
+          if (target && target.classList.contains('game-card')) {
+            state.controllerFocusArea = 'main_inner';
+            state.controllerFocusInnerIndex = 0;
+            target.classList.add('card-inner-focus');
+            showToast('Card Inner Focus Mode Enabled', 'info');
+            updateControllerFocus({ scroll: false });
+          }
+        }
+        aPressStart = -1; // -1 means long press consumed it
+      }
+    }
+  }
+
   // 1. Digital button click handling (A, B, X, Y, D-pad, etc)
   gp.buttons.forEach((btn, idx) => {
     // Support analog triggers as "pressed"
@@ -4926,31 +4955,41 @@ function handleGamepadInput(gp) {
 
     if (isPressed && !wasPressed) {
       if (elements.videoPlayerContainer && !elements.videoPlayerContainer.classList.contains('hidden')) showVideoControls();
-      if (idx === 0) { // A press - record start time + LT state, but do NOT fire action yet (decide on release)
+      if (idx === 6) { // LT: detect double-tap + hold for multi-select toggle
+        const now = Date.now();
+        if (now - ltLastReleaseTime < DOUBLE_TAP_WINDOW && ltDoubleTapHoldStart === 0) {
+          // second tap within window -> start hold timer
+          ltDoubleTapHoldStart = now;
+        } else {
+          ltDoubleTapHoldStart = 0;
+        }
+        ltLastPressTime = now;
+      } else if (idx === 0) { // A press - record start time, but do NOT fire action yet
         aPressStart = Date.now();
-        lastControllerLT = !!(gp.buttons[6] && (gp.buttons[6].pressed || (gp.buttons[6].value > 0.5)));
       } else {
         triggerGamepadButton(idx);
       }
     }
 
-    // A release: decide short press (perform action) or long press (enter multi-select)
-    if (!isPressed && wasPressed && idx === 0) {
-      const dur = Date.now() - aPressStart;
-      if (dur > 550) {
-        // Long press A on focused game card -> enter multi-select mode
-        if (state.controllerFocusArea === 'main') {
+    // Check for LT double-tap + hold (3 seconds) to toggle multi-select
+    const ltPressed = gp.buttons[6] && (gp.buttons[6].pressed || (typeof gp.buttons[6].value === 'number' && gp.buttons[6].value > 0.5));
+    if (ltPressed && ltDoubleTapHoldStart > 0) {
+      const holdDur = Date.now() - ltDoubleTapHoldStart;
+      if (holdDur >= DOUBLE_TAP_HOLD_TIME) {
+        if (state.multiSelectMode) {
+          // double-tap + hold LT while in multi-select -> disable and deselect all
+          exitMultiSelectMode();
+          showToast('Multi-select mode disabled via double-tap + hold LT', 'info');
+        } else if (state.controllerFocusArea === 'main') {
+          // double-tap + hold LT on focused game card -> enter multi-select mode
           const main = getMainElements();
           const t = main[state.controllerFocusIndex];
           if (t && t.classList.contains('game-card')) {
             const appId = parseInt(t.dataset.appId, 10);
             if (!isNaN(appId)) {
-              const wasOff = !state.multiSelectMode;
               state.multiSelectMode = true;
               updateMultiSelectButton();
-              if (wasOff) {
-                showToast('Multi-select mode enabled via long-press A', 'info');
-              }
+              showToast('Multi-select mode enabled via double-tap + hold LT', 'info');
               if (!state.selectedAppIds.has(appId)) {
                 state.selectedAppIds.add(appId);
                 state.lastSelectedAppId = appId;
@@ -4959,10 +4998,26 @@ function handleGamepadInput(gp) {
             }
           }
         }
-      } else {
+        ltDoubleTapHoldStart = 0; // reset to prevent repeat
+      }
+    }
+
+    // LT release
+    if (!isPressed && wasPressed && idx === 6) {
+      ltLastReleaseTime = Date.now();
+      // cancel any pending double-tap hold if released early
+      if (ltDoubleTapHoldStart > 0) {
+        ltDoubleTapHoldStart = 0;
+      }
+    }
+
+    // A release: always short press now (unless consumed by long press)
+    if (!isPressed && wasPressed && idx === 0) {
+      if (aPressStart > 0) {
         // Short press A: perform normal action (click equivalent)
         triggerGamepadActionA();
       }
+      aPressStart = 0;
     }
   });
 
@@ -5662,7 +5717,22 @@ function triggerGamepadDirection(dir) {
     updateControllerFocus();
     return;
   }
-
+  if (state.controllerFocusArea === 'main_inner') {
+    const mainEls = getMainElements();
+    const target = mainEls[state.controllerFocusIndex];
+    if (target) {
+      const innerBtns = Array.from(target.querySelectorAll('.game-actions-row button'));
+      if (innerBtns.length > 0) {
+        if (dir === 'left') {
+          state.controllerFocusInnerIndex = Math.max(0, state.controllerFocusInnerIndex - 1);
+        } else if (dir === 'right') {
+          state.controllerFocusInnerIndex = Math.min(innerBtns.length - 1, state.controllerFocusInnerIndex + 1);
+        }
+        updateControllerFocus({ scroll: false });
+      }
+    }
+    return;
+  }
   if (state.controllerFocusArea === 'main') {
     const mainEls = getMainElements();
     if (mainEls.length === 0) return;
@@ -5952,6 +6022,20 @@ function updateControllerFocus(options = {}) {
         target = mainEls[state.controllerFocusIndex];
       }
     }
+
+    if (state.controllerFocusArea === 'main_inner') {
+      const parentCard = mainEls[state.controllerFocusIndex];
+      if (parentCard) {
+        // Keep the card visually active (handled by CSS via .card-inner-focus which is added when mode is entered)
+        const innerBtns = Array.from(parentCard.querySelectorAll('.game-actions-row button'));
+        if (state.controllerFocusInnerIndex < 0) state.controllerFocusInnerIndex = 0;
+        if (state.controllerFocusInnerIndex >= innerBtns.length) state.controllerFocusInnerIndex = innerBtns.length - 1;
+        target = innerBtns[state.controllerFocusInnerIndex];
+      } else {
+        // Fallback if card disappeared
+        state.controllerFocusArea = 'main';
+      }
+    }
   }
 
   if (target) {
@@ -6003,9 +6087,15 @@ function triggerGamepadActionA() {
   } else if (state.controllerFocusArea === 'left') {
     const left = getLeftElements();
     target = left[state.controllerFocusIndex];
-  } else if (state.controllerFocusArea === 'main') {
+  } else if (state.controllerFocusArea === 'main' || state.controllerFocusArea === 'main_inner') {
     const main = getMainElements();
     target = main[state.controllerFocusIndex];
+    if (state.controllerFocusArea === 'main_inner' && target) {
+      const innerBtns = Array.from(target.querySelectorAll('.game-actions-row button'));
+      if (innerBtns[state.controllerFocusInnerIndex]) {
+        target = innerBtns[state.controllerFocusInnerIndex];
+      }
+    }
   } else if (state.controllerFocusArea === 'right') {
     const right = getRightElements();
     target = right[state.controllerFocusIndex];
@@ -6211,6 +6301,14 @@ function triggerGamepadActionB() {
   // If in multi-select mode, B cancels/exits the mode (per spec) and unselects all
   if (state.multiSelectMode) {
     exitMultiSelectMode();
+    return;
+  }
+
+  // If in main_inner mode, exit back to main
+  if (state.controllerFocusArea === 'main_inner') {
+    state.controllerFocusArea = 'main';
+    document.querySelectorAll('.card-inner-focus').forEach(el => el.classList.remove('card-inner-focus'));
+    updateControllerFocus({ scroll: false });
     return;
   }
 

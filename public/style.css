@@ -2697,12 +2697,14 @@ a:hover {
 }
 
 /* For game cards in focus, expand overlay slightly */
-.game-card.controller-focused {
+.game-card.controller-focused,
+.game-card.card-inner-focus {
   transform: scale(1.03) translateY(-4px) !important;
   box-shadow: 0 10px 30px rgba(102, 192, 244, 0.5), 0 0 0 3px var(--accent-blue) !important;
   z-index: 99 !important;
 }
-.game-card.controller-focused .game-overlay {
+.game-card.controller-focused .game-overlay,
+.game-card.card-inner-focus .game-overlay {
   opacity: 1 !important;
   z-index: 10;
 }
@@ -2738,9 +2740,10 @@ input.controller-focused {
   box-shadow: 0 0 0 2px var(--accent-blue), 0 0 12px rgba(102, 192, 244, 0.4) !important;
 }
 
-/* Header control buttons (filter, fullscreen, view toggles, etc) when A-nav focused */
+/* Header control buttons and inner card action buttons when A-nav focused */
 .header-controls button.controller-focused,
-.header-controls .view-btn.controller-focused {
+.header-controls .view-btn.controller-focused,
+.game-actions-row button.controller-focused {
   transform: scale(1.08) !important;
   box-shadow: 0 0 0 3px var(--accent-blue), 0 0 14px rgba(102, 192, 244, 0.65) !important;
   background-color: rgba(102, 192, 244, 0.12) !important;
