@@ -1,6 +1,6 @@
 import express from 'express';
 import fs from 'fs/promises';
-import { existsSync, readFileSync, mkdirSync, renameSync, statSync, appendFileSync } from 'fs';
+import { existsSync, readFileSync, mkdirSync, renameSync, statSync, appendFileSync, watch } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { exec, execSync } from 'child_process';
@@ -1931,11 +1931,21 @@ async function getInstalledGamesFromManifests() {
               const content = await fs.readFile(manifestPath, 'utf-8');
               const nameMatch = content.match(/"name"\s+"([^"]+)"/);
               const name = nameMatch ? nameMatch[1] : `Steam App ${appId}`;
+              const stateFlagsMatch = content.match(/"StateFlags"\s+"(\d+)"/);
+              const stateFlags = stateFlagsMatch ? parseInt(stateFlagsMatch[1], 10) : 0;
+              const bytesToDownloadMatch = content.match(/"BytesToDownload"\s+"(\d+)"/);
+              const bytesDownloadedMatch = content.match(/"BytesDownloaded"\s+"(\d+)"/);
+              const bytesToDownload = bytesToDownloadMatch ? parseInt(bytesToDownloadMatch[1], 10) : 0;
+              const bytesDownloaded = bytesDownloadedMatch ? parseInt(bytesDownloadedMatch[1], 10) : 0;
+              
               localGames.push({
                 appid: appId,
                 name: name,
                 playtime_forever: 0,
-                img_icon_url: ''
+                img_icon_url: '',
+                stateFlags: stateFlags,
+                bytesDownloaded: bytesDownloaded,
+                bytesToDownload: bytesToDownload
               });
             } catch (readErr) {
               localGames.push({
@@ -2289,11 +2299,49 @@ app.get('/api/games', async (req, res) => {
     const vdfAppIds = await getAppIdsFromLocalConfigs();
     const vdfSet = new Set(vdfAppIds);
 
+    const localGamesMap = new Map(localGames.map(g => [g.appid, g]));
     const mergedGamesMap = new Map();
     cache.forEach(game => {
+      const local = localGamesMap.get(game.appid);
+      let isInstalled = false;
+      let installStatus = null;
+      let installPercent = 0;
+      
+      if (local) {
+        const flags = local.stateFlags || 0;
+        const isPaused = (flags & 32);
+        const isDownloading = !isPaused && ((flags & 16) || (flags & 512) || (flags & 256) || (flags & 1024));
+        const isQueued = isPaused || (flags & 8);
+        const isUninstalling = (flags & 4096);
+        const isUninstalled = (flags === 1) || (flags === 0);
+        
+        if (isUninstalled) {
+          isInstalled = false;
+        } else if ((flags & 4) && !isDownloading && !isQueued && !isUninstalling) {
+          isInstalled = true;
+        } else if (isUninstalling) {
+          isInstalled = false;
+          installStatus = 'uninstalling';
+        } else if (isPaused) {
+          isInstalled = false;
+          installStatus = 'paused';
+        } else if (isDownloading) {
+          isInstalled = false;
+          installStatus = 'downloading';
+          const bDownloaded = local.bytesDownloaded || 0;
+          const bToDownload = local.bytesToDownload || 0;
+          installPercent = bToDownload > 0 ? Math.round((bDownloaded / bToDownload) * 100) : 0;
+        } else {
+          isInstalled = false;
+          installStatus = 'queued';
+        }
+      }
+      
       mergedGamesMap.set(game.appid, {
         ...game,
-        isInstalled: localAppIds.has(game.appid),
+        isInstalled,
+        installStatus,
+        installPercent,
         isVRSupported: false,
         isVROnly: false
       });
@@ -2303,9 +2351,43 @@ app.get('/api/games', async (req, res) => {
       if (!mergedGamesMap.has(localGame.appid) && vdfSet.has(localGame.appid)) {
         // Only introduce "extra" installed games if we have VDF evidence of current license/account tracking.
         // This prevents refunded/removed games with leftover install manifests from being included.
+        const flags = localGame.stateFlags || 0;
+        const isPaused = (flags & 32);
+        const isDownloading = !isPaused && ((flags & 16) || (flags & 512) || (flags & 256) || (flags & 1024));
+        const isQueued = isPaused || (flags & 8);
+        const isUninstalling = (flags & 4096);
+        const isUninstalled = (flags === 1) || (flags === 0);
+        
+        let isInstalled = false;
+        let installStatus = null;
+        let installPercent = 0;
+        
+        if (isUninstalled) {
+          isInstalled = false;
+        } else if ((flags & 4) && !isDownloading && !isQueued && !isUninstalling) {
+          isInstalled = true;
+        } else if (isUninstalling) {
+          isInstalled = false;
+          installStatus = 'uninstalling';
+        } else if (isPaused) {
+          isInstalled = false;
+          installStatus = 'paused';
+        } else if (isDownloading) {
+          isInstalled = false;
+          installStatus = 'downloading';
+          const bDownloaded = localGame.bytesDownloaded || 0;
+          const bToDownload = localGame.bytesToDownload || 0;
+          installPercent = bToDownload > 0 ? Math.round((bDownloaded / bToDownload) * 100) : 0;
+        } else {
+          isInstalled = false;
+          installStatus = 'queued';
+        }
+
         mergedGamesMap.set(localGame.appid, {
           ...localGame,
-          isInstalled: true,
+          isInstalled,
+          installStatus,
+          installPercent,
           isVRSupported: false,
           isVROnly: false
         });
@@ -2856,8 +2938,49 @@ app.get('/api/games/check-install', async (req, res) => {
 
   try {
     const installedGames = await getInstalledGamesFromManifests();
-    const isInstalled = installedGames.some(g => g.appid === appId);
-    res.json({ appId, isInstalled });
+    const game = installedGames.find(g => g.appid === appId);
+    
+    let isInstalled = false;
+    let status = 'uninstalled';
+    let percent = 0;
+    
+    if (game) {
+      const flags = game.stateFlags || 0;
+      const isPaused = (flags & 32);
+      const isDownloading = !isPaused && ((flags & 16) || (flags & 512) || (flags & 256) || (flags & 1024));
+      const isQueued = isPaused || (flags & 8);
+      const isUninstalling = (flags & 4096);
+      const isUninstalled = (flags === 1) || (flags === 0);
+      
+      const bDownloaded = game.bytesDownloaded || 0;
+      const bToDownload = game.bytesToDownload || 0;
+      percent = bToDownload > 0 ? Math.round((bDownloaded / bToDownload) * 100) : 0;
+      
+      if (isUninstalled) {
+        isInstalled = false;
+        status = 'uninstalled';
+      } else if ((flags & 4) && !isDownloading && !isQueued && !isUninstalling) {
+        isInstalled = true;
+        status = 'installed';
+      } else if (isUninstalling) {
+        isInstalled = false;
+        status = 'uninstalling';
+      } else if (isPaused) {
+        isInstalled = false;
+        status = 'paused';
+      } else if (isDownloading) {
+        isInstalled = false;
+        status = 'downloading';
+      } else {
+        isInstalled = false;
+        status = 'queued';
+      }
+    } else {
+      isInstalled = false;
+      status = 'uninstalled';
+    }
+    
+    res.json({ appId, isInstalled, status, percent });
   } catch (err) {
     console.error(`Failed to verify installation status for AppID ${appId}:`, err);
     res.status(500).json({ error: 'Failed to verify installation status' });
@@ -4881,9 +5004,133 @@ app.post('/api/config/import-collections', async (req, res) => {
   }
 });
 
+let sseClients = [];
+
+function broadcastInstallUpdate(data) {
+  sseClients.forEach(client => {
+    client.write(`data: ${JSON.stringify(data)}\n\n`);
+  });
+}
+
+async function readFileWithRetry(filePath, retries = 5, delay = 50) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await fs.readFile(filePath, 'utf-8');
+    } catch (err) {
+      if (i === retries - 1) throw err;
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+}
+
+let manifestWatchers = [];
+
+async function startWatchingManifests() {
+  manifestWatchers.forEach(w => w.close());
+  manifestWatchers = [];
+
+  const steamPath = locateSteamPath();
+  if (!steamPath) return;
+
+  const libraryPaths = [steamPath];
+  const vdfPath = path.join(steamPath, 'steamapps', 'libraryfolders.vdf');
+  try {
+    if (existsSync(vdfPath)) {
+      const vdfContent = await fs.readFile(vdfPath, 'utf-8');
+      const matches = vdfContent.matchAll(/"path"\s+"([^"]+)"/g);
+      for (const match of matches) {
+        const libPath = match[1].replace(/\\\\/g, '\\');
+        if (!libraryPaths.includes(libPath) && existsSync(libPath)) {
+          libraryPaths.push(libPath);
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("Watcher: Could not read libraryfolders.vdf:", err);
+  }
+
+  for (const libPath of libraryPaths) {
+    const steamappsPath = path.join(libPath, 'steamapps');
+    if (existsSync(steamappsPath)) {
+      try {
+        const watcher = watch(steamappsPath, async (eventType, filename) => {
+          if (filename && filename.startsWith('appmanifest_') && filename.endsWith('.acf')) {
+            const match = filename.match(/^appmanifest_(\d+)\.acf$/);
+            if (match) {
+              const appId = parseInt(match[1], 10);
+              const manifestPath = path.join(steamappsPath, filename);
+              
+              try {
+                if (existsSync(manifestPath)) {
+                  const content = await readFileWithRetry(manifestPath);
+                  const stateFlagsMatch = content.match(/"StateFlags"\s+"(\d+)"/);
+                  const flags = stateFlagsMatch ? parseInt(stateFlagsMatch[1], 10) : 0;
+                  const bytesToDownloadMatch = content.match(/"BytesToDownload"\s+"(\d+)"/);
+                  const bytesDownloadedMatch = content.match(/"BytesDownloaded"\s+"(\d+)"/);
+                  const bytesToDownload = bytesToDownloadMatch ? parseInt(bytesToDownloadMatch[1], 10) : 0;
+                  const bytesDownloaded = bytesDownloadedMatch ? parseInt(bytesDownloadedMatch[1], 10) : 0;
+                  const percent = bytesToDownload > 0 ? Math.round((bytesDownloaded / bytesToDownload) * 100) : 0;
+                  
+                  const isPaused = (flags & 32);
+                  const isDownloading = !isPaused && ((flags & 16) || (flags & 512) || (flags & 256) || (flags & 1024));
+                  const isQueued = isPaused || (flags & 8);
+                  const isUninstalling = (flags & 4096);
+                  const isUninstalled = (flags === 1) || (flags === 0);
+                  
+                  let isInstalled = false;
+                  let status = 'queued';
+                  
+                  if (isUninstalled) {
+                    isInstalled = false;
+                    status = 'uninstalled';
+                  } else if ((flags & 4) && !isDownloading && !isQueued && !isUninstalling) {
+                    isInstalled = true;
+                    status = 'installed';
+                  } else if (isUninstalling) {
+                    status = 'uninstalling';
+                  } else if (isPaused) {
+                    status = 'paused';
+                  } else if (isDownloading) {
+                    status = 'downloading';
+                  } else {
+                    status = 'queued';
+                  }
+                  
+                  broadcastInstallUpdate({ appId, isInstalled, status, percent });
+                } else {
+                  broadcastInstallUpdate({ appId, isInstalled: false, status: 'uninstalled', percent: 0 });
+                }
+              } catch (e) {
+                // Ignore transient locked read errors
+              }
+            }
+          }
+        });
+        manifestWatchers.push(watcher);
+      } catch (err) {
+        console.warn(`Watcher failed for ${steamappsPath}:`, err.message);
+      }
+    }
+  }
+}
+
+app.get('/api/games/install-progress', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+  
+  sseClients.push(res);
+  
+  req.on('close', () => {
+    sseClients = sseClients.filter(c => c !== res);
+  });
+});
+
 app.listen(PORT, () => {
   console.log(`=========================================`);
   console.log(` SteamCollectionManager Server is running on:`);
   console.log(` http://localhost:${PORT}`);
   console.log(`=========================================`);
+  startWatchingManifests().catch(err => console.error("Error starting watchers:", err));
 });

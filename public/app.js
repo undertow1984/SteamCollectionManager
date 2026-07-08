@@ -29,7 +29,9 @@ let state = {
   multiSelectMode: false, // When true, clicking cards does multi-select instead of opening details
   allowMultiFolderMembership: false, // When true, a game may belong to more than one normal folder
   preDropdownArea: null,
-  preDropdownIndex: null
+  preDropdownIndex: null,
+  trackingInstallAppIds: new Set(),
+  gameInstallStatus: {} // Map of appId -> 'queued' | 'downloading'
 };
 
 // DOM Elements
@@ -216,6 +218,7 @@ document.addEventListener('DOMContentLoaded', () => {
   checkConfiguration();
   // Initial responsive check
   handleWindowResize();
+  initInstallProgressListener();
 });
 
 function closeHelpModal() {
@@ -1147,6 +1150,24 @@ async function loadGames() {
       } else {
         elements.emptyLibraryState.classList.add('hidden');
         elements.foldersContainer.classList.remove('hidden');
+        
+        // Initialize tracking for any games returned from the server with active installation/uninstallation statuses
+        if (!state.gameInstallStatus) {
+          state.gameInstallStatus = {};
+        }
+        if (!state.trackingInstallAppIds) {
+          state.trackingInstallAppIds = new Set();
+        }
+        state.games.forEach(game => {
+          if (game.installStatus) {
+            state.gameInstallStatus[game.appid] = { status: game.installStatus, percent: game.installPercent || 0 };
+            if (game.installStatus === 'downloading' || game.installStatus === 'queued') {
+              trackGameInstall(game.appid, game.name);
+            } else if (game.installStatus === 'uninstalling') {
+              setTimeout(() => verifyUninstallStatus(game.appid, game.name, 1), 3000);
+            }
+          }
+        });
       }
       populateMultiselectFilters();
       updateMultiselectTrigger('hltb');
@@ -1267,6 +1288,7 @@ async function launchGame(appId) {
     showToast(`Launching ${name}...`, 'success');
   } else {
     showToast(`Opening Steam installer for ${name}...`, 'info');
+    trackGameInstall(appId, name);
   }
   
   try {
@@ -2419,6 +2441,10 @@ function renderGameCard(game) {
     }
   }
 
+  const installObj = state.gameInstallStatus && state.gameInstallStatus[game.appid];
+  const installStatus = installObj ? installObj.status : null;
+  const installPercent = installObj ? installObj.percent : 0;
+
   card.innerHTML = `
     <div class="game-art-wrapper">
       <img 
@@ -2445,12 +2471,35 @@ function renderGameCard(game) {
         </div>
         ${badgeHtml}
       </div>
-      <div class="game-actions-row">
-        <button class="${launchBtnClass}" title="${launchBtnTitle}"><i class="fa-solid ${launchBtnIcon}"></i> ${launchBtnText}</button>
-        ${isInstalled ? `<button class="game-uninstall-btn" title="Uninstall game"><i class="fa-solid fa-trash-can"></i></button>` : ''}
-        <button class="game-quick-move-btn" title="Quick Move"><i class="fa-solid fa-angles-right"></i></button>
-        <button class="game-menu-btn" title="Game Details"><i class="fa-solid fa-ellipsis-v"></i></button>
-      </div>
+      ${(() => {
+        if (installStatus === 'queued' || installStatus === 'downloading' || installStatus === 'paused' || installStatus === 'uninstalling') {
+          let text = 'Queued';
+          let iconClass = 'fa-spinner fa-spin';
+          if (installStatus === 'downloading') {
+            text = 'Downloading';
+            iconClass = 'fa-download fa-bounce';
+          } else if (installStatus === 'paused') {
+            text = 'Paused';
+            iconClass = 'fa-circle-pause';
+          } else if (installStatus === 'uninstalling') {
+            text = 'Uninstalling';
+            iconClass = 'fa-trash-can fa-pulse';
+          }
+          return `
+            <div class="game-install-status-row" style="display: flex; align-items: center; justify-content: center; width: 100%; height: 32px; font-weight: 800; font-size: 12px; text-transform: uppercase; letter-spacing: 1.5px; z-index: 11; position: relative;">
+              <span class="status-text ${installStatus}" style="display: flex; align-items: center; gap: 6px;"><i class="fa-solid ${iconClass}"></i> ${text}</span>
+            </div>
+          `;
+        }
+        return `
+          <div class="game-actions-row">
+            <button class="${launchBtnClass}" title="${launchBtnTitle}"><i class="fa-solid ${launchBtnIcon}"></i> ${launchBtnText}</button>
+            ${isInstalled ? `<button class="game-uninstall-btn" title="Uninstall game"><i class="fa-solid fa-trash-can"></i></button>` : ''}
+            <button class="game-quick-move-btn" title="Quick Move"><i class="fa-solid fa-angles-right"></i></button>
+            <button class="game-menu-btn" title="Game Details"><i class="fa-solid fa-ellipsis-v"></i></button>
+          </div>
+        `;
+      })()}
     </div>
   `;
 
@@ -2537,33 +2586,41 @@ function renderGameCard(game) {
 
   // Bind Launch button
   const launchBtn = card.querySelector('.game-launch-btn');
-  launchBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    launchGame(game.appid);
-  });
+  if (launchBtn) {
+    launchBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      launchGame(game.appid);
+    });
+  }
 
   // Bind Uninstall button
   if (isInstalled) {
     const uninstallBtn = card.querySelector('.game-uninstall-btn');
-    uninstallBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      uninstallGame(game.appid, game.name);
-    });
+    if (uninstallBtn) {
+      uninstallBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        uninstallGame(game.appid, game.name);
+      });
+    }
   }
 
   // Bind Quick Move button
   const quickMoveBtn = card.querySelector('.game-quick-move-btn');
-  quickMoveBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    openSidecar(game.appid);
-  });
+  if (quickMoveBtn) {
+    quickMoveBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openSidecar(game.appid);
+    });
+  }
 
   // Bind Menu options button
   const menuBtn = card.querySelector('.game-menu-btn');
-  menuBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    openGameOptionsModal(game);
-  });
+  if (menuBtn) {
+    menuBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openGameOptionsModal(game);
+    });
+  }
 
   // Setup Drag Start
   card.addEventListener('dragstart', (e) => {
@@ -4898,20 +4955,34 @@ function handleGamepadInput(gp) {
     // only reset on frames with potential input; see triggers below for precise
   }
   
-  // Check global shortcut: LS(10) + RT(7) held for 2 seconds
+  // Check global shortcut: LS(10) + RT(7)
   if (state.enableControllerShortcut) {
     const rtBtn = gp.buttons[7] && (gp.buttons[7].pressed || (typeof gp.buttons[7].value === 'number' && gp.buttons[7].value > 0.5));
     const lsBtn = gp.buttons[10] && (gp.buttons[10].pressed || (typeof gp.buttons[10].value === 'number' && gp.buttons[10].value > 0.5));
     
     if (rtBtn && lsBtn) {
-      if (startBackPressStart === 0) {
-        startBackPressStart = Date.now();
-      } else if (Date.now() - startBackPressStart >= 2000) {
+      const isMinimized = document.visibilityState === 'hidden';
+      if (isMinimized) {
+        // minimized: requires long press (2 seconds)
+        if (startBackPressStart === 0) {
+          startBackPressStart = Date.now();
+        } else if (Date.now() - startBackPressStart >= 2000) {
+          if (!globalShortcutWasPressed) {
+            if (window.electronAPI) {
+              window.electronAPI.restoreWindow();
+            }
+            globalShortcutWasPressed = true;
+          }
+        }
+      } else {
+        // background (not focused) or foreground: immediate / short press
         if (!globalShortcutWasPressed) {
           if (window.electronAPI) {
-            if (document.visibilityState === 'hidden' || !document.hasFocus()) {
+            if (!document.hasFocus()) {
+              // in the background
               window.electronAPI.restoreWindow();
             } else {
+              // in the foreground: toggle fullscreen
               window.electronAPI.toggleFullscreen();
             }
           }
@@ -6658,7 +6729,14 @@ async function uninstallGame(appId, name) {
 
   window.location.href = `steam://uninstall/${appId}`;
   showToast(`Uninstall triggered for "${name}". Syncing status...`, 'info');
-  // Start background verification polling (checks every 3s, up to 10 times)
+  
+  if (!state.gameInstallStatus) {
+    state.gameInstallStatus = {};
+  }
+  state.gameInstallStatus[appId] = { status: 'uninstalling', percent: 0 };
+  renderMainLibrary();
+  
+  // Start background verification polling (checks every 3s, up to 30 times)
   setTimeout(() => verifyUninstallStatus(appId, name, 1), 3000);
 }
 
@@ -6668,26 +6746,203 @@ async function verifyUninstallStatus(appId, name, attempt) {
     const res = await fetch(`/api/games/check-install?appid=${appId}`);
     if (res.ok) {
       const data = await res.json();
-      if (!data.isInstalled) {
+      if (data.status === 'uninstalled') {
         // Game has been successfully uninstalled!
-        const game = state.games.find(g => g.appid === appId);
+        const game = state.games.find(g => Number(g.appid) === Number(appId));
         if (game) {
           game.isInstalled = false;
-          showToast(`"${name}" has been uninstalled successfully!`, 'success');
-          // Re-render the library viewport to remove it from "Installed" lists real-time
-          renderMainLibrary();
-          renderSidebarFolders();
-          updateStats();
         }
+        showToast(`"${name}" has been uninstalled successfully!`, 'success');
+        
+        if (state.gameInstallStatus && state.gameInstallStatus[appId]) {
+          delete state.gameInstallStatus[appId];
+        }
+        
+        // Re-render the library viewport to remove it from "Installed" lists real-time
+        renderMainLibrary();
+        renderSidebarFolders();
+        updateStats();
       } else {
-        // Still showing as installed. Wait and try again if under limits
-        if (attempt < 10) {
+        // Still showing as installed / uninstalling. Wait and try again if under limits
+        if (attempt < 30) {
           setTimeout(() => verifyUninstallStatus(appId, name, attempt + 1), 3000);
+        } else {
+          // Timeout, clear uninstalling status overlay
+          if (state.gameInstallStatus && state.gameInstallStatus[appId]) {
+            delete state.gameInstallStatus[appId];
+            renderMainLibrary();
+          }
         }
       }
     }
   } catch (err) {
     console.error("Error verifying uninstallation status:", err);
+  }
+}
+
+// Background verification polling for installation detection
+function trackGameInstall(appId, name) {
+  if (!state.trackingInstallAppIds) {
+    state.trackingInstallAppIds = new Set();
+  }
+  if (state.trackingInstallAppIds.has(appId)) return;
+  state.trackingInstallAppIds.add(appId);
+  
+  if (!state.gameInstallStatus) {
+    state.gameInstallStatus = {};
+  }
+  state.gameInstallStatus[appId] = { status: 'queued', percent: 0 }; // start as queued
+  
+  updateGameCardInstallProgress(appId, 'queued', 0);
+  
+  setTimeout(() => verifyInstallStatus(appId, name), 2000);
+}
+
+async function verifyInstallStatus(appId, name) {
+  if (!state.trackingInstallAppIds || !state.trackingInstallAppIds.has(appId)) return;
+  try {
+    const res = await fetch(`/api/games/check-install?appid=${appId}`);
+    if (res.ok) {
+      const data = await res.json();
+      
+      if (!state.gameInstallStatus) {
+        state.gameInstallStatus = {};
+      }
+      
+      if (data.isInstalled || data.status === 'installed') {
+        // Game has been successfully installed!
+        const game = state.games.find(g => Number(g.appid) === Number(appId));
+        if (game) {
+          game.isInstalled = true;
+        }
+        showToast(`"${name}" has been installed successfully!`, 'success');
+        
+        if (state.gameInstallStatus && state.gameInstallStatus[appId]) {
+          delete state.gameInstallStatus[appId];
+        }
+        
+        // Re-render the library viewport to show it in "Installed" lists real-time
+        renderMainLibrary();
+        renderSidebarFolders();
+        updateStats();
+        state.trackingInstallAppIds.delete(appId);
+        return; // stop polling
+      } else if (data.status === 'downloading') {
+        updateGameCardInstallProgress(appId, 'downloading', data.percent || 0);
+      } else if (data.status === 'queued') {
+        updateGameCardInstallProgress(appId, 'queued', 0);
+      } else {
+        // uninstalled / not found yet
+        updateGameCardInstallProgress(appId, 'queued', 0);
+      }
+    }
+  } catch (err) {
+    console.error("Error verifying installation status:", err);
+  }
+  // Check status again - constant 5 seconds polling interval
+  setTimeout(() => verifyInstallStatus(appId, name), 5000);
+}
+
+function initInstallProgressListener() {
+  if (!window.EventSource) return;
+  const source = new EventSource('/api/games/install-progress');
+  source.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      const { appId, isInstalled, status, percent } = data;
+      
+      if (state.trackingInstallAppIds && state.trackingInstallAppIds.has(appId)) {
+        if (!state.gameInstallStatus) {
+          state.gameInstallStatus = {};
+        }
+        
+        if (isInstalled || status === 'installed') {
+          const game = state.games.find(g => Number(g.appid) === Number(appId));
+          if (game) {
+            game.isInstalled = true;
+          }
+          showToast(`"${game ? game.name : appId}" has been installed successfully!`, 'success');
+          
+          if (state.gameInstallStatus && state.gameInstallStatus[appId]) {
+            delete state.gameInstallStatus[appId];
+          }
+          
+          renderMainLibrary();
+          renderSidebarFolders();
+          updateStats();
+          state.trackingInstallAppIds.delete(appId);
+        } else if (status === 'downloading') {
+          updateGameCardInstallProgress(appId, 'downloading', percent || 0);
+        } else if (status === 'queued') {
+          updateGameCardInstallProgress(appId, 'queued', 0);
+        } else if (status === 'uninstalled') {
+          updateGameCardInstallProgress(appId, 'queued', 0);
+        }
+      }
+    } catch (err) {
+      console.error('Error handling install progress SSE:', err);
+    }
+  };
+  
+  source.onerror = () => {
+    console.warn("SSE connection lost. Reconnecting...");
+  };
+}
+
+// In-place UI update helper to change status text smoothly without library re-creation
+function updateGameCardInstallProgress(appId, status, percent) {
+  if (!state.gameInstallStatus) {
+    state.gameInstallStatus = {};
+  }
+  state.gameInstallStatus[appId] = { status, percent: 0 };
+
+  const card = document.querySelector(`.game-card[data-app-id="${appId}"]`);
+  if (!card) return;
+
+  // 1. Remove progress container if it exists
+  const artWrapper = card.querySelector('.game-art-wrapper');
+  if (artWrapper) {
+    const progressContainer = artWrapper.querySelector('.game-install-progress-container');
+    if (progressContainer) {
+      progressContainer.remove();
+    }
+  }
+
+  // 2. Update Overlay Status Text
+  const overlay = card.querySelector('.game-overlay');
+  if (overlay) {
+    let statusRow = overlay.querySelector('.game-install-status-row');
+    const actionsRow = overlay.querySelector('.game-actions-row');
+
+    if (status === 'queued' || status === 'downloading' || status === 'paused' || status === 'uninstalling') {
+      if (actionsRow) {
+        actionsRow.style.display = 'none';
+      }
+      if (!statusRow) {
+        statusRow = document.createElement('div');
+        statusRow.className = 'game-install-status-row';
+        statusRow.style.cssText = 'display: flex; align-items: center; justify-content: center; width: 100%; height: 32px; font-weight: 800; font-size: 12px; text-transform: uppercase; letter-spacing: 1.5px; z-index: 11; position: relative;';
+        overlay.appendChild(statusRow);
+      }
+
+      let text = 'Queued';
+      let iconClass = 'fa-spinner fa-spin';
+      if (status === 'downloading') {
+        text = 'Downloading';
+        iconClass = 'fa-download fa-bounce';
+      } else if (status === 'paused') {
+        text = 'Paused';
+        iconClass = 'fa-circle-pause';
+      } else if (status === 'uninstalling') {
+        text = 'Uninstalling';
+        iconClass = 'fa-trash-can fa-pulse';
+      }
+
+      statusRow.innerHTML = `<span class="status-text ${status}" style="display: flex; align-items: center; gap: 6px;"><i class="fa-solid ${iconClass}"></i> ${text}</span>`;
+    } else {
+      // Completed, trigger full render to restore buttons
+      renderMainLibrary();
+    }
   }
 }
 

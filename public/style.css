@@ -3039,3 +3039,41 @@ input.controller-focused {
 .tristate-btn:active {
   transform: scale(0.92);
 }
+
+/* Game Installation Status text overlay styles */
+@keyframes statusPulse {
+  0%, 100% { opacity: 0.65; }
+  50% { opacity: 1; }
+}
+
+.game-install-status-row .status-text {
+  font-family: var(--font-main, inherit);
+  font-weight: 800;
+  text-transform: uppercase;
+  animation: statusPulse 2s infinite ease-in-out;
+}
+
+.game-install-status-row .status-text.queued {
+  color: #ff9f43; /* warm orange/amber */
+  text-shadow: 0 0 10px rgba(255, 159, 67, 0.4);
+}
+
+.game-install-status-row .status-text.downloading {
+  color: #2ecc71; /* green/fresh emerald */
+  text-shadow: 0 0 10px rgba(46, 204, 113, 0.4);
+}
+
+.game-install-progress-container {
+  box-shadow: 0 -1px 4px rgba(0,0,0,0.5);
+  border-top: 1px solid rgba(255,255,255,0.08);
+}
+
+.game-install-status-row .status-text.uninstalling {
+  color: #e74c3c; /* red for uninstalling */
+  text-shadow: 0 0 10px rgba(231, 76, 60, 0.4);
+}
+
+.game-install-status-row .status-text.paused {
+  color: #95a5a6; /* slate gray/paused */
+  text-shadow: 0 0 10px rgba(149, 165, 166, 0.4);
+}
