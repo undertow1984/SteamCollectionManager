@@ -319,6 +319,83 @@ app.whenReady().then(async () => {
     console.warn('Failed to ensure data/cache/log/config directories:', e.message);
   }
 
+  // Sync main application config and cache files to Electron's dataDir without wiping target data
+  try {
+    const mainAppDir = __dirname;
+    if (mainAppDir !== dataDir) {
+      const srcConfigDir = path.join(mainAppDir, 'config');
+      const destConfigDir = path.join(dataDir, 'config');
+      const srcCacheDir = path.join(mainAppDir, 'cache');
+      const destCacheDir = path.join(dataDir, 'cache');
+
+      // 1. Sync Config files
+      if (fs.existsSync(srcConfigDir)) {
+        // categories.json
+        const catSrc = path.join(srcConfigDir, 'categories.json');
+        const catDest = path.join(destConfigDir, 'categories.json');
+        if (fs.existsSync(catSrc)) {
+          if (!fs.existsSync(catDest)) {
+            fs.copyFileSync(catSrc, catDest);
+          } else {
+            const srcStat = fs.statSync(catSrc);
+            const destStat = fs.statSync(catDest);
+            if (srcStat.mtimeMs > destStat.mtimeMs) {
+              fs.copyFileSync(catSrc, catDest);
+            }
+          }
+        }
+
+        // config.json (merge to avoid wiping electron settings)
+        const cfgSrc = path.join(srcConfigDir, 'config.json');
+        const cfgDest = path.join(destConfigDir, 'config.json');
+        if (fs.existsSync(cfgSrc)) {
+          let srcConfig = {};
+          let destConfig = {};
+          try {
+            srcConfig = JSON.parse(fs.readFileSync(cfgSrc, 'utf8') || '{}');
+          } catch (e) {}
+          try {
+            if (fs.existsSync(cfgDest)) {
+              destConfig = JSON.parse(fs.readFileSync(cfgDest, 'utf8') || '{}');
+            }
+          } catch (e) {}
+
+          const electronKeys = ['electronPort', 'minimizeToTrayOnClose', 'startWithWindows', 'startMinimizedToTray'];
+          const mergedConfig = { ...srcConfig };
+          electronKeys.forEach(key => {
+            if (destConfig[key] !== undefined) {
+              mergedConfig[key] = destConfig[key];
+            }
+          });
+
+          fs.writeFileSync(cfgDest, JSON.stringify(mergedConfig, null, 2), 'utf8');
+        }
+      }
+
+      // 2. Sync Cache files
+      if (fs.existsSync(srcCacheDir)) {
+        const files = fs.readdirSync(srcCacheDir);
+        for (const file of files) {
+          const fileSrc = path.join(srcCacheDir, file);
+          const fileDest = path.join(destCacheDir, file);
+          if (fs.statSync(fileSrc).isFile()) {
+            if (!fs.existsSync(fileDest)) {
+              fs.copyFileSync(fileSrc, fileDest);
+            } else {
+              const srcStat = fs.statSync(fileSrc);
+              const destStat = fs.statSync(fileDest);
+              if (srcStat.mtimeMs > destStat.mtimeMs) {
+                fs.copyFileSync(fileSrc, fileDest);
+              }
+            }
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to sync main app config/cache to Electron:', err.message);
+  }
+
   // Completely disable default Electron application menu bar globally
   Menu.setApplicationMenu(null);
 
