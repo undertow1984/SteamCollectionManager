@@ -1937,6 +1937,8 @@ async function getInstalledGamesFromManifests() {
               const bytesDownloadedMatch = content.match(/"BytesDownloaded"\s+"(\d+)"/);
               const bytesToDownload = bytesToDownloadMatch ? parseInt(bytesToDownloadMatch[1], 10) : 0;
               const bytesDownloaded = bytesDownloadedMatch ? parseInt(bytesDownloadedMatch[1], 10) : 0;
+              const sizeOnDiskMatch = content.match(/"SizeOnDisk"\s+"(\d+)"/);
+              const sizeOnDisk = sizeOnDiskMatch ? parseInt(sizeOnDiskMatch[1], 10) : 0;
               
               localGames.push({
                 appid: appId,
@@ -1945,7 +1947,8 @@ async function getInstalledGamesFromManifests() {
                 img_icon_url: '',
                 stateFlags: stateFlags,
                 bytesDownloaded: bytesDownloaded,
-                bytesToDownload: bytesToDownload
+                bytesToDownload: bytesToDownload,
+                sizeOnDisk: sizeOnDisk
               });
             } catch (readErr) {
               localGames.push({
@@ -2276,6 +2279,28 @@ app.get('/api/games', async (req, res) => {
     if (migrated) {
       await writeJsonFile(CACHE_PATH, cache);
     }
+    
+    // Merge live local playtime updates from localconfig.vdf
+    try {
+      cachedPlaytimeFromLocal = null; // force fresh read
+      const playtimeMap = await getPlaytimeMapFromLocalConfig();
+      let cacheUpdated = false;
+      cache = cache.map(g => {
+        if (g && g.appid) {
+          const localPlaytime = playtimeMap.get(g.appid);
+          if (localPlaytime !== undefined && localPlaytime > (g.playtime_forever || 0)) {
+            g.playtime_forever = localPlaytime;
+            cacheUpdated = true;
+          }
+        }
+        return g;
+      });
+      if (cacheUpdated) {
+        await writeJsonFile(CACHE_PATH, cache);
+      }
+    } catch (playtimeErr) {
+      console.warn("Failed to merge live local playtimes:", playtimeErr);
+    }
   }
 
   if (!cache) {
@@ -2342,6 +2367,7 @@ app.get('/api/games', async (req, res) => {
         isInstalled,
         installStatus,
         installPercent,
+        sizeOnDisk: local ? local.sizeOnDisk || 0 : 0,
         isVRSupported: false,
         isVROnly: false
       });
@@ -2388,6 +2414,7 @@ app.get('/api/games', async (req, res) => {
           isInstalled,
           installStatus,
           installPercent,
+          sizeOnDisk: localGame.sizeOnDisk || 0,
           isVRSupported: false,
           isVROnly: false
         });
@@ -2980,7 +3007,7 @@ app.get('/api/games/check-install', async (req, res) => {
       status = 'uninstalled';
     }
     
-    res.json({ appId, isInstalled, status, percent });
+    res.json({ appId, isInstalled, status, percent, sizeOnDisk: game ? game.sizeOnDisk || 0 : 0 });
   } catch (err) {
     console.error(`Failed to verify installation status for AppID ${appId}:`, err);
     res.status(500).json({ error: 'Failed to verify installation status' });
