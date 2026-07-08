@@ -29,8 +29,8 @@
       "main.js",
       "preload.js",
       "!server.mjs",
-      "!config.json",
-      "!categories.json",
+      "!config/**",
+      "!cache/**",
       "!games_cache.json",
       "!steam_*_cache.json",
       "!**/{.git,.github,*.md,*.log}"

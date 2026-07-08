@@ -1,6 +1,6 @@
 import express from 'express';
 import fs from 'fs/promises';
-import { existsSync, readFileSync, mkdirSync } from 'fs';
+import { existsSync, readFileSync, mkdirSync, renameSync, statSync, appendFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { exec, execSync } from 'child_process';
@@ -49,19 +49,130 @@ try {
   console.warn('Could not ensure DATA_DIR:', e.message);
 }
 
-const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
-const CATEGORIES_PATH = path.join(DATA_DIR, 'categories.json');
-const CACHE_PATH = path.join(DATA_DIR, 'games_cache.json');
-const APP_LIST_CACHE_PATH = path.join(DATA_DIR, 'steam_app_list_cache.json');
-const REVIEWS_CACHE_PATH = path.join(DATA_DIR, 'steam_reviews_count_cache.json');
-const STEAM_RATINGS_CACHE_PATH = path.join(DATA_DIR, 'steam_ratings_cache.json');
-const METACRITIC_CACHE_PATH = path.join(DATA_DIR, 'steam_metacritic_cache.json');
-const MEDIA_CACHE_PATH = path.join(DATA_DIR, 'steam_media_cache.json');
-const LICENSE_CACHE_PATH = path.join(DATA_DIR, 'steam_license_cache.json');
-const HLTB_CACHE_PATH = path.join(DATA_DIR, 'steam_hltb_cache.json');
-const STEAM_TAGS_CACHE = path.join(DATA_DIR, 'steam_tags_cache.json');
-const ACTIVE_COUNT_PATH = path.join(DATA_DIR, 'active_games_count.txt');
-const ACTIVE_APPIDS_PATH = path.join(DATA_DIR, 'active_appids.json');
+// Subfolders for organization
+const CACHE_DIR = path.join(DATA_DIR, 'cache');
+const LOG_DIR = path.join(DATA_DIR, 'log');
+const CONFIG_DIR = path.join(DATA_DIR, 'config');
+
+try {
+  if (!existsSync(CACHE_DIR)) mkdirSync(CACHE_DIR, { recursive: true });
+  if (!existsSync(LOG_DIR)) mkdirSync(LOG_DIR, { recursive: true });
+  if (!existsSync(CONFIG_DIR)) mkdirSync(CONFIG_DIR, { recursive: true });
+} catch (e) {
+  console.warn('Could not ensure cache/log/config dirs:', e.message);
+}
+
+// === Logging setup (file + console, 2MB rotation) ===
+const LOG_PATH = path.join(LOG_DIR, 'steam-collection-manager.log');
+const MAX_LOG_SIZE = 2 * 1024 * 1024; // 2 MB
+
+function rotateLogIfNeeded() {
+  try {
+    if (existsSync(LOG_PATH)) {
+      const stat = statSync(LOG_PATH);
+      if (stat.size > MAX_LOG_SIZE) {
+        const ts = new Date().toISOString().replace(/[:.]/g, '-');
+        const archive = path.join(LOG_DIR, `steam-collection-manager-${ts}.log`);
+        renameSync(LOG_PATH, archive);
+      }
+    }
+  } catch (e) {
+    // best effort
+  }
+}
+
+function writeLog(level, ...args) {
+  const msg = args.map(a => {
+    if (typeof a === 'string') return a;
+    try { return JSON.stringify(a); } catch { return String(a); }
+  }).join(' ');
+  const line = `[${new Date().toISOString()}] [${level}] ${msg}\n`;
+  try {
+    rotateLogIfNeeded();
+    appendFileSync(LOG_PATH, line, 'utf8');
+  } catch (e) {}
+  // always mirror to console too
+  if (level === 'ERROR') _origError(...args);
+  else if (level === 'WARN') _origWarn(...args);
+  else _origLog(...args);
+}
+
+// Capture originals before overriding
+const _origLog = console.log.bind(console);
+const _origWarn = console.warn.bind(console);
+const _origError = console.error.bind(console);
+
+console.log = (...args) => writeLog('INFO', ...args);
+console.warn = (...args) => writeLog('WARN', ...args);
+console.error = (...args) => writeLog('ERROR', ...args);
+
+// Catch uncaughts
+process.on('uncaughtException', (err) => {
+  writeLog('FATAL', 'Uncaught exception:', err.stack || err.message || err);
+});
+process.on('unhandledRejection', (reason) => {
+  writeLog('FATAL', 'Unhandled rejection:', reason?.stack || reason);
+});
+
+// Migrate legacy cache files from DATA_DIR root into cache/ (one-time for existing users)
+const legacyCacheFiles = [
+  'games_cache.json',
+  'steam_app_list_cache.json',
+  'steam_reviews_count_cache.json',
+  'steam_ratings_cache.json',
+  'steam_metacritic_cache.json',
+  'steam_media_cache.json',
+  'steam_license_cache.json',
+  'steam_hltb_cache.json',
+  'steam_tags_cache.json',
+  'scan_status.json',
+  'scanned_games.json',
+  'active_games_count.txt',
+  'active_appids.json'
+];
+for (const fname of legacyCacheFiles) {
+  const oldP = path.join(DATA_DIR, fname);
+  const newP = path.join(CACHE_DIR, fname);
+  if (existsSync(oldP) && !existsSync(newP)) {
+    try {
+      renameSync(oldP, newP);
+      console.log(`[migrate] Moved legacy cache file ${fname} -> cache/`);
+    } catch (e) {
+      console.warn(`[migrate] Failed to move ${fname}:`, e.message);
+    }
+  }
+}
+
+// Migrate legacy config files
+const legacyConfigFiles = ['config.json', 'categories.json'];
+for (const fname of legacyConfigFiles) {
+  const oldP = path.join(DATA_DIR, fname);
+  const newP = path.join(CONFIG_DIR, fname);
+  if (existsSync(oldP) && !existsSync(newP)) {
+    try {
+      renameSync(oldP, newP);
+      console.log(`[migrate] Moved legacy config file ${fname} -> config/`);
+    } catch (e) {
+      console.warn(`[migrate] Failed to move ${fname}:`, e.message);
+    }
+  }
+}
+
+const CONFIG_PATH = path.join(CONFIG_DIR, 'config.json');
+const CATEGORIES_PATH = path.join(CONFIG_DIR, 'categories.json');
+const CACHE_PATH = path.join(CACHE_DIR, 'games_cache.json');
+const APP_LIST_CACHE_PATH = path.join(CACHE_DIR, 'steam_app_list_cache.json');
+const REVIEWS_CACHE_PATH = path.join(CACHE_DIR, 'steam_reviews_count_cache.json');
+const STEAM_RATINGS_CACHE_PATH = path.join(CACHE_DIR, 'steam_ratings_cache.json');
+const METACRITIC_CACHE_PATH = path.join(CACHE_DIR, 'steam_metacritic_cache.json');
+const MEDIA_CACHE_PATH = path.join(CACHE_DIR, 'steam_media_cache.json');
+const LICENSE_CACHE_PATH = path.join(CACHE_DIR, 'steam_license_cache.json');
+const HLTB_CACHE_PATH = path.join(CACHE_DIR, 'steam_hltb_cache.json');
+const STEAM_TAGS_CACHE = path.join(CACHE_DIR, 'steam_tags_cache.json');
+const ACTIVE_COUNT_PATH = path.join(CACHE_DIR, 'active_games_count.txt');
+const ACTIVE_APPIDS_PATH = path.join(CACHE_DIR, 'active_appids.json');
+const SCAN_STATUS_PATH = path.join(CACHE_DIR, 'scan_status.json');
+const SCANNED_GAMES_PATH = path.join(CACHE_DIR, 'scanned_games.json');
 
 let licenseCache = {};
 let hltbCache = {};
@@ -1565,8 +1676,6 @@ async function writeJsonFile(filePath, data) {
 // These ensure the one-time automatic initial scans (after first setup) only happen once ever.
 // After that, crawlers only run when user explicitly clicks the buttons in Settings.
 // If app is stopped/relaunched mid-scan, it won't auto-resume or auto-run on next launch.
-const SCAN_STATUS_PATH = path.join(DATA_DIR, 'scan_status.json');
-
 async function loadScanStatus() {
   if (existsSync(SCAN_STATUS_PATH)) {
     try {
@@ -1605,8 +1714,6 @@ async function markScanCompleted(type) {
     console.log(`[ScanStatus] Marked ${type} scan as ever completed (one-time auto disabled).`);
   }
 }
-
-const SCANNED_GAMES_PATH = path.join(DATA_DIR, 'scanned_games.json');
 
 async function loadScannedGames() {
   if (existsSync(SCANNED_GAMES_PATH)) {
@@ -2872,9 +2979,8 @@ async function getPlaytimeMapFromLocalConfig() {
   // not family members' (prevents family group accumulation).
   let primaryDir = null;
   try {
-    const configPath = path.join(DATA_DIR, 'config.json');
-    if (existsSync(configPath)) {
-      const cfgRaw = await fs.readFile(configPath, 'utf8');
+    if (existsSync(CONFIG_PATH)) {
+      const cfgRaw = await fs.readFile(CONFIG_PATH, 'utf8');
       const cfg = JSON.parse(cfgRaw || '{}');
       if (cfg.steamId) {
         primaryDir = (BigInt(cfg.steamId) - 76561197960265728n).toString();

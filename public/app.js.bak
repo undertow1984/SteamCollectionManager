@@ -204,7 +204,7 @@ let currentHlsInstance = null; // active hls.js controller for adaptive .m3u8 tr
 
 // Video controls auto-hide state
 let videoControlsHideTimer = null;
-const VIDEO_CONTROLS_HIDE_DELAY = 3000; // 3 seconds of inactivity
+const VIDEO_CONTROLS_HIDE_DELAY = 3500; // ms
 
 // Confirmation dialog state (Promise resolver for controller-friendly dialogs)
 let confirmResolve = null;
@@ -291,12 +291,10 @@ function setupEventListeners() {
       // Update hamburger icon or button visual state
       const icon = elements.btnToggleSidebar.querySelector('i');
       if (elements.sidebar.classList.contains('collapsed')) {
-        // closed: show hamburger
-        icon.className = 'fa-solid fa-bars';
+        icon.className = 'fa-solid fa-angles-right';
         elements.btnToggleSidebar.title = 'Expand Sidebar';
       } else {
-        // opened: show arrows pointing left
-        icon.className = 'fa-solid fa-angles-left';
+        icon.className = 'fa-solid fa-bars';
         elements.btnToggleSidebar.title = 'Collapse Sidebar';
       }
     });
@@ -3336,10 +3334,7 @@ function closeInlineVideo() {
   const container = elements.videoPlayerContainer;
 
   clearTimeout(videoControlsHideTimer);
-  if (container) {
-    container.classList.remove('show-controls');
-    container.classList.remove('hide-cursor');
-  }
+  if (container) container.classList.remove('show-controls');
 
   // Always destroy active HLS instance first (releases MSE, network, etc)
   if (currentHlsInstance) {
@@ -3799,20 +3794,23 @@ function showSteamFallback(appId, title = 'Trailer', extraMsg = '') {
 function showVideoControls() {
   if (!elements.videoPlayerContainer) return;
   elements.videoPlayerContainer.classList.add('show-controls');
-  // Note: do NOT remove 'hide-cursor' here. Cursor hide is only cleared on actual mouse movement.
-  // This keeps cursor hidden when showing controls via controller or autoplay.
   resetVideoControlsHideTimer();
 }
 
 function hideVideoControls() {
   if (!elements.videoPlayerContainer) return;
-  elements.videoPlayerContainer.classList.remove('show-controls');
-  // Hide the mouse cursor (only while playing) so it isn't in the way of the video
-  // when controls have faded. Reappears on mouse move or controller activity.
-  const v = elements.videoPlayerContainer.querySelector('#detailVideoEl');
-  if (v && !v.paused) {
-    elements.videoPlayerContainer.classList.add('hide-cursor');
+  // Don't hide while mouse is over the player
+  if (elements.videoPlayerContainer.matches(':hover')) {
+    resetVideoControlsHideTimer();
+    return;
   }
+  const v = elements.videoPlayerContainer.querySelector('#detailVideoEl');
+  if (v && v.paused) {
+    // Keep controls visible while paused (standard video player behavior)
+    resetVideoControlsHideTimer();
+    return;
+  }
+  elements.videoPlayerContainer.classList.remove('show-controls');
 }
 
 function resetVideoControlsHideTimer() {
@@ -3826,16 +3824,11 @@ function setupVideoControlsAutoHide() {
 
   container.dataset.controlsAutoHideSetup = 'true';
 
-  // Mouse moved in the window shows controls (even if cursor was already in window, only on actual move)
-  // Attach to document so "moved in the window" works anywhere
-  const mouseMoveHandler = () => {
-    if (elements.videoPlayerContainer && !elements.videoPlayerContainer.classList.contains('hidden')) {
-      // On actual mouse movement: show controls and ensure cursor is visible
-      elements.videoPlayerContainer.classList.remove('hide-cursor');
-      showVideoControls();
-    }
-  };
-  document.addEventListener('mousemove', mouseMoveHandler);
+  // Mouse activity shows controls and resets timer
+  const mouseHandler = () => showVideoControls();
+  container.addEventListener('mousemove', mouseHandler);
+  container.addEventListener('mouseenter', mouseHandler);
+  container.addEventListener('mouseleave', resetVideoControlsHideTimer);
 
   // Show on any custom control button interaction (in addition to their stopPropagation)
   const controls = container.querySelector('#customVideoControls');
@@ -4362,7 +4355,7 @@ function handleLB() {
       const toggle = elements.btnToggleSidebar;
       if (toggle) {
         const icon = toggle.querySelector('i');
-        if (icon) icon.className = 'fa-solid fa-angles-left';
+        if (icon) icon.className = 'fa-solid fa-bars';
         toggle.title = 'Collapse Sidebar';
       }
     }
@@ -4653,7 +4646,7 @@ function handleWindowResize() {
       elements.sidebar.classList.add('collapsed');
       if (elements.btnToggleSidebar) {
         const icon = elements.btnToggleSidebar.querySelector('i');
-        if (icon) icon.className = 'fa-solid fa-bars';
+        if (icon) icon.className = 'fa-solid fa-angles-right';
         elements.btnToggleSidebar.title = 'Expand Sidebar';
       }
     }
@@ -6264,7 +6257,7 @@ function triggerGamepadActionB() {
     const toggle = elements.btnToggleSidebar;
     if (toggle) {
       const icon = toggle.querySelector('i');
-      if (icon) icon.className = 'fa-solid fa-bars';
+      if (icon) icon.className = 'fa-solid fa-angles-right';
       toggle.title = 'Expand Sidebar';
     }
     resetControllerFocus();

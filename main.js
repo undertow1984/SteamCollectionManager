@@ -16,7 +16,7 @@ function getUserDataDir() {
 function loadConfig() {
   try {
     const dataDir = getUserDataDir();
-    const configFile = path.join(dataDir, 'config.json');
+    const configFile = path.join(dataDir, 'config', 'config.json');
     if (fs.existsSync(configFile)) {
       const raw = fs.readFileSync(configFile, 'utf8');
       return JSON.parse(raw || '{}');
@@ -109,7 +109,7 @@ ipcMain.on('update-tray-settings', () => {
 function getConfiguredElectronPort() {
   try {
     const dataDir = getUserDataDir();
-    const configFile = path.join(dataDir, 'config.json');
+    const configFile = path.join(dataDir, 'config', 'config.json');
     if (fs.existsSync(configFile)) {
       const raw = fs.readFileSync(configFile, 'utf8');
       const cfg = JSON.parse(raw || '{}');
@@ -309,8 +309,14 @@ app.whenReady().then(async () => {
     if (!fs.existsSync(dataDir)) {
       fs.mkdirSync(dataDir, { recursive: true });
     }
+    const cacheDir = path.join(dataDir, 'cache');
+    const logDir = path.join(dataDir, 'log');
+    const configDir = path.join(dataDir, 'config');
+    if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
+    if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
+    if (!fs.existsSync(configDir)) fs.mkdirSync(configDir, { recursive: true });
   } catch (e) {
-    console.warn('Failed to ensure data directory:', e.message);
+    console.warn('Failed to ensure data/cache/log/config directories:', e.message);
   }
 
   // Completely disable default Electron application menu bar globally

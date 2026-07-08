@@ -1546,6 +1546,12 @@ a:hover {
   display: block;
   background: #000;
 }
+
+/* Hide mouse cursor over the video when controls have faded (so cursor isn't in the way) */
+.video-player-container.hide-cursor,
+.video-player-container.hide-cursor video {
+  cursor: none;
+}
 .btn-close-video {
   position: absolute;
   top: 8px;
@@ -1572,12 +1578,12 @@ a:hover {
   gap: 12px;
   padding: 24px 12px 12px;
   opacity: 0;
+  pointer-events: none;
   transition: opacity 0.2s ease;
 }
-.video-player-container:hover .custom-video-controls,
-.video-player-container:focus-within .custom-video-controls,
-.video-player-container:has(.controller-focused) .custom-video-controls {
+.video-player-container.show-controls .custom-video-controls {
   opacity: 1;
+  pointer-events: auto;
 }
 .video-btn {
   background: rgba(0,0,0,0.5);
