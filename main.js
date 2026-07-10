@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, Tray, Menu } from 'electron';
 import path from 'path';
 import fs from 'fs';
-import { exec } from 'child_process';
+import { exec, spawn } from 'child_process';
 import { fileURLToPath, pathToFileURL } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -30,6 +30,88 @@ function loadConfig() {
 let tray = null;
 let isQuitting = false;
 
+function isWindowInBackground() {
+  if (!mainWindow || mainWindow.isDestroyed()) return true;
+  try {
+    if (mainWindow.isMinimized()) return true;
+    if (!mainWindow.isVisible()) return true;
+    // Opacity 0 is used by hideToTray()
+    if (typeof mainWindow.getOpacity === 'function' && mainWindow.getOpacity() < 0.05) return true;
+    if (!mainWindow.isFocused()) return true;
+    return false;
+  } catch (_) {
+    return true;
+  }
+}
+
+function restoreWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  try {
+    try {
+      if (typeof app.focus === 'function') app.focus({ steal: true });
+    } catch (_) {}
+
+    // Undo hideToTray() state first
+    mainWindow.setSkipTaskbar(false);
+    mainWindow.setOpacity(1);
+
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    if (mainWindow.isFullScreen()) {
+      // Keep fullscreen if already there; just ensure focus
+    }
+
+    mainWindow.show();
+    mainWindow.focus();
+    if (typeof mainWindow.moveTop === 'function') mainWindow.moveTop();
+
+    // Brief always-on-top to steal focus without leaving the window stuck on top
+    mainWindow.setAlwaysOnTop(true);
+    mainWindow.webContents?.focus();
+
+    setTimeout(() => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.setAlwaysOnTop(false);
+        mainWindow.focus();
+      }
+    }, 200);
+  } catch (e) {
+    console.warn('Failed to restore window:', e.message);
+  }
+}
+
+/** Global L3+R3 hold shortcut: restore if backgrounded/trayed, else toggle fullscreen. Debounced. */
+let lastGlobalShortcutAt = 0;
+function handleGlobalControllerShortcut() {
+  const now = Date.now();
+  if (now - lastGlobalShortcutAt < 900) return; // debounce bounce / dual fire
+  lastGlobalShortcutAt = now;
+
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+
+  if (isWindowInBackground()) {
+    console.log('[GamepadWatcher] Window is backgrounded — restoring to foreground');
+    restoreWindow();
+  } else {
+    console.log('[GamepadWatcher] Window focused — toggling fullscreen');
+    try {
+      mainWindow.setFullScreen(!mainWindow.isFullScreen());
+    } catch (e) {
+      console.warn('toggle fullscreen failed:', e.message);
+    }
+  }
+}
+
+function hideToTray() {
+  if (!mainWindow) return;
+  try {
+    mainWindow.setOpacity(0);
+    mainWindow.setSkipTaskbar(true);
+    mainWindow.minimize();
+  } catch (e) {
+    console.warn('Failed to hide window to tray:', e.message);
+  }
+}
+
 function createTray() {
   if (tray) return;
   const iconPath = app.isPackaged 
@@ -42,10 +124,7 @@ function createTray() {
       { 
         label: 'Open SteamCollectionManager', 
         click: () => {
-          if (mainWindow) {
-            mainWindow.show();
-            mainWindow.focus();
-          }
+          restoreWindow();
         } 
       },
       { type: 'separator' },
@@ -62,10 +141,7 @@ function createTray() {
     tray.setContextMenu(contextMenu);
     
     tray.on('double-click', () => {
-      if (mainWindow) {
-        mainWindow.show();
-        mainWindow.focus();
-      }
+      restoreWindow();
     });
   } catch (e) {
     console.error('Failed to create Tray:', e.message);
@@ -102,8 +178,220 @@ function applyTraySettings() {
   }
 }
 
+let gamepadProcess = null;
+
+function getGamepadWatcherScriptPath() {
+  return path.join(getUserDataDir(), 'gamepad-watcher.ps1');
+}
+
+function writeGamepadWatcherScript() {
+  // File-based watcher is far more reliable than piping C# into powershell stdin.
+  // Requires Left Stick click (L3) + Right Stick click (R3) held together for 3 seconds.
+  const script = `# SteamCollectionManager background gamepad shortcut watcher
+# Emits TRIGGER when Left Stick click (L3) + Right Stick click (R3) are held together for 3 seconds.
+$ErrorActionPreference = 'Stop'
+$cs = @'
+using System;
+using System.Runtime.InteropServices;
+using System.Threading;
+using System.Diagnostics;
+
+public static class ScmGamepadWatcher
+{
+    [DllImport("xinput1_4.dll", EntryPoint = "XInputGetState")]
+    static extern int XInputGetState14(int userIndex, ref XINPUT_STATE state);
+    [DllImport("xinput9_1_0.dll", EntryPoint = "XInputGetState")]
+    static extern int XInputGetState910(int userIndex, ref XINPUT_STATE state);
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct XINPUT_GAMEPAD
+    {
+        public ushort wButtons;
+        public byte bLeftTrigger;
+        public byte bRightTrigger;
+        public short sThumbLX;
+        public short sThumbLY;
+        public short sThumbRX;
+        public short sThumbRY;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct XINPUT_STATE
+    {
+        public uint dwPacketNumber;
+        public XINPUT_GAMEPAD Gamepad;
+    }
+
+    // Left stick click (L3) + Right stick click (R3)
+    const ushort XINPUT_GAMEPAD_LEFT_THUMB = 0x0040;
+    const ushort XINPUT_GAMEPAD_RIGHT_THUMB = 0x0080;
+    const ushort COMBO_MASK = XINPUT_GAMEPAD_LEFT_THUMB | XINPUT_GAMEPAD_RIGHT_THUMB;
+    const int HOLD_MS = 3000;
+    static bool useLegacy = false;
+
+    static int GetState(int i, ref XINPUT_STATE st)
+    {
+        try
+        {
+            return useLegacy ? XInputGetState910(i, ref st) : XInputGetState14(i, ref st);
+        }
+        catch
+        {
+            useLegacy = true;
+            try { return XInputGetState910(i, ref st); } catch { return -1; }
+        }
+    }
+
+    public static void Run()
+    {
+        Console.WriteLine("READY");
+        Console.Out.Flush();
+        XINPUT_STATE state = new XINPUT_STATE();
+        long comboStartMs = 0; // 0 = not holding combo
+        bool fired = false;
+        while (true)
+        {
+            bool comboHeld = false;
+            for (int i = 0; i < 4; i++)
+            {
+                if (GetState(i, ref state) != 0) continue;
+                if ((state.Gamepad.wButtons & COMBO_MASK) == COMBO_MASK)
+                {
+                    comboHeld = true;
+                    break;
+                }
+            }
+            if (comboHeld)
+            {
+                long now = Stopwatch.GetTimestamp() * 1000 / Stopwatch.Frequency;
+                if (comboStartMs == 0)
+                {
+                    comboStartMs = now;
+                }
+                else if (!fired && (now - comboStartMs) >= HOLD_MS)
+                {
+                    Console.WriteLine("TRIGGER");
+                    Console.Out.Flush();
+                    fired = true;
+                }
+            }
+            else
+            {
+                comboStartMs = 0;
+                fired = false;
+            }
+            Thread.Sleep(40);
+        }
+    }
+}
+'@
+try {
+  Add-Type -TypeDefinition $cs -ErrorAction Stop
+} catch {
+  # Type may already exist in this process — ignore "already exists" errors
+  if ($_.Exception.Message -notmatch 'already exists') { throw }
+}
+[ScmGamepadWatcher]::Run()
+`;
+  const p = getGamepadWatcherScriptPath();
+  try {
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, script, 'utf8');
+  } catch (e) {
+    console.warn('[GamepadWatcher] Failed to write watcher script:', e.message);
+  }
+  return p;
+}
+
+function startGamepadWatcher() {
+  const config = loadConfig();
+  if (config.enableControllerShortcut === false) {
+    stopGamepadWatcher();
+    return;
+  }
+  if (gamepadProcess) return;
+
+  const scriptPath = writeGamepadWatcherScript();
+  if (!fs.existsSync(scriptPath)) {
+    console.warn('[GamepadWatcher] Script missing, cannot start');
+    return;
+  }
+
+  try {
+    gamepadProcess = spawn(
+      'powershell.exe',
+      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptPath],
+      {
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        detached: false
+      }
+    );
+
+    gamepadProcess.stdout.setEncoding('utf8');
+    let stdoutBuf = '';
+    gamepadProcess.stdout.on('data', (data) => {
+      stdoutBuf += data.toString();
+      let idx;
+      while ((idx = stdoutBuf.indexOf('\n')) >= 0) {
+        const line = stdoutBuf.slice(0, idx).trim();
+        stdoutBuf = stdoutBuf.slice(idx + 1);
+        if (!line) continue;
+        if (line === 'READY') {
+          console.log('[GamepadWatcher] L3+R3 hold watcher is ready');
+        } else if (line === 'TRIGGER') {
+          handleGlobalControllerShortcut();
+        }
+      }
+    });
+
+    gamepadProcess.stderr.on('data', (data) => {
+      console.warn('[GamepadWatcher] PowerShell error:', data.toString().trim());
+    });
+
+    gamepadProcess.on('error', (err) => {
+      console.warn('[GamepadWatcher] Process error:', err.message);
+      gamepadProcess = null;
+    });
+
+    gamepadProcess.on('exit', (code, signal) => {
+      console.warn('[GamepadWatcher] Process exited code=', code, 'signal=', signal);
+      gamepadProcess = null;
+      // Auto-restart if the app is still running and shortcut is enabled
+      if (!isQuitting) {
+        setTimeout(() => {
+          if (!isQuitting && !gamepadProcess) startGamepadWatcher();
+        }, 1500);
+      }
+    });
+
+    console.log('[GamepadWatcher] Started:', scriptPath);
+  } catch (e) {
+    console.warn('[GamepadWatcher] Failed to start watcher:', e.message);
+    gamepadProcess = null;
+  }
+}
+
+function stopGamepadWatcher() {
+  if (gamepadProcess) {
+    try {
+      // Kill the whole process tree on Windows (powershell + any children)
+      if (process.platform === 'win32' && gamepadProcess.pid) {
+        spawn('taskkill', ['/pid', String(gamepadProcess.pid), '/f', '/t'], {
+          windowsHide: true,
+          stdio: 'ignore'
+        });
+      } else {
+        gamepadProcess.kill();
+      }
+    } catch (e) {}
+    gamepadProcess = null;
+  }
+}
+
 ipcMain.on('update-tray-settings', () => {
   applyTraySettings();
+  startGamepadWatcher();
 });
 
 function getConfiguredElectronPort() {
@@ -165,23 +453,7 @@ ipcMain.on('minimize-window', () => {
 });
 
 ipcMain.on('restore-window', () => {
-  if (!mainWindow) return;
-
-  try {
-    if (mainWindow.isMinimized()) {
-      mainWindow.restore();
-    }
-    mainWindow.show();
-    mainWindow.setAlwaysOnTop(true);
-    mainWindow.focus();
-    mainWindow.setAlwaysOnTop(false);
-
-    // Extra nudge for some Windows + Electron combinations
-    if (typeof mainWindow.moveTop === 'function') mainWindow.moveTop();
-    mainWindow.webContents?.focus();
-  } catch (e) {
-    console.warn('Failed to restore window after game close:', e.message);
-  }
+  restoreWindow();
 });
 
 ipcMain.on('toggle-fullscreen', () => {
@@ -194,7 +466,7 @@ function createWindow(electronPort = 3001, serverStartError = null, startMinimiz
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
-    show: !startMinimized,
+    show: true, // Always show initially so Chromium can instantiate the hardware/gamepad controller state
     icon: app.isPackaged 
       ? path.join(process.resourcesPath, 'icon.png')
       : path.join(__dirname, 'icon.png'),
@@ -208,12 +480,16 @@ function createWindow(electronPort = 3001, serverStartError = null, startMinimiz
     }
   });
 
+  if (startMinimized) {
+    hideToTray();
+  }
+
   mainWindow.on('close', (e) => {
     const config = loadConfig();
     const minimizeToTray = config.minimizeToTrayOnClose !== false;
     if (!isQuitting && minimizeToTray) {
       e.preventDefault();
-      mainWindow.hide();
+      hideToTray();
     }
   });
 
@@ -309,14 +585,14 @@ app.whenReady().then(async () => {
     if (!fs.existsSync(dataDir)) {
       fs.mkdirSync(dataDir, { recursive: true });
     }
-    const cacheDir = path.join(dataDir, 'cache');
+    const cacheDir = path.join(dataDir, 'cachedata');
     const logDir = path.join(dataDir, 'log');
     const configDir = path.join(dataDir, 'config');
     if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
     if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
     if (!fs.existsSync(configDir)) fs.mkdirSync(configDir, { recursive: true });
   } catch (e) {
-    console.warn('Failed to ensure data/cache/log/config directories:', e.message);
+    console.warn('Failed to ensure data/cachedata/log/config directories:', e.message);
   }
 
   // Sync main application config and cache files to Electron's dataDir without wiping target data
@@ -325,8 +601,8 @@ app.whenReady().then(async () => {
     if (mainAppDir !== dataDir) {
       const srcConfigDir = path.join(mainAppDir, 'config');
       const destConfigDir = path.join(dataDir, 'config');
-      const srcCacheDir = path.join(mainAppDir, 'cache');
-      const destCacheDir = path.join(dataDir, 'cache');
+      const srcCacheDir = path.join(mainAppDir, 'cachedata');
+      const destCacheDir = path.join(dataDir, 'cachedata');
 
       // 1. Sync Config files
       if (fs.existsSync(srcConfigDir)) {
@@ -422,6 +698,7 @@ app.whenReady().then(async () => {
   const config = loadConfig();
   const startMinimized = process.argv.includes('--minimized') || (config.startMinimizedToTray && process.argv.includes('--minimized'));
   createWindow(electronPort, serverStartError, startMinimized);
+  startGamepadWatcher();
 
   // If we already know the server failed to import, show detailed error immediately.
   if (serverStartError) {
@@ -464,6 +741,7 @@ app.whenReady().then(async () => {
 
 app.on('window-all-closed', () => {
   hideOnScreenKeyboard();
+  stopGamepadWatcher();
   if (process.platform !== 'darwin') app.quit();
 });
 

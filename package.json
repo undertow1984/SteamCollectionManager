@@ -1,6 +1,6 @@
 {
   "name": "steam-collection-manager",
-  "version": "1.0.0",
+  "version": "1.0.5",
   "description": "A web-based Steam collection manager and library organizer",
   "main": "main.js",
   "type": "module",
@@ -8,7 +8,8 @@
     "start": "node server.mjs",
     "electron": "electron .",
     "electron-dev": "electron .",
-    "build": "electron-builder --win"
+    "build": "node scripts/bump-version.mjs && electron-builder --win",
+    "bump-version": "node scripts/bump-version.mjs"
   },
   "build": {
     "appId": "com.steamcollectionmanager.app",
@@ -22,7 +23,8 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "createStartMenuShortcut": true
+      "createStartMenuShortcut": true,
+      "include": "build/installer.nsh"
     },
     "files": [
       "**/*",

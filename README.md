@@ -151,6 +151,7 @@ SteamCollectionManager has first-class controller support.
 | **LT**              | Multi-select modifier (with A). |
 | **RT**              | Quick Move the focused game. |
 | **Back / Select**   | Instantly open the Change Folder dialog. |
+| **L3 + R3 (hold 3s)** | Global shortcut (if enabled in Settings): restore from tray/background, or toggle fullscreen when focused. |
 | **Left Stick / D-Pad** | Navigate. |
 | **Right Stick**     | Scroll. |
 

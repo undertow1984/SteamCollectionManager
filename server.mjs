@@ -1,6 +1,6 @@
 import express from 'express';
 import fs from 'fs/promises';
-import { existsSync, readFileSync, mkdirSync, renameSync, statSync, appendFileSync, watch } from 'fs';
+import { existsSync, readFileSync, mkdirSync, renameSync, statSync, appendFileSync, watch, readdirSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { exec, execSync } from 'child_process';
@@ -50,16 +50,34 @@ try {
 }
 
 // Subfolders for organization
-const CACHE_DIR = path.join(DATA_DIR, 'cache');
+const CACHE_DIR = path.join(DATA_DIR, 'cachedata');
 const LOG_DIR = path.join(DATA_DIR, 'log');
 const CONFIG_DIR = path.join(DATA_DIR, 'config');
+
+const LEGACY_CACHE_DIR = path.join(DATA_DIR, 'cache');
+if (existsSync(LEGACY_CACHE_DIR) && !existsSync(CACHE_DIR)) {
+  try {
+    mkdirSync(CACHE_DIR, { recursive: true });
+    const files = readdirSync(LEGACY_CACHE_DIR);
+    for (const file of files) {
+      if (file.endsWith('.json') || file.endsWith('.txt')) {
+        const src = path.join(LEGACY_CACHE_DIR, file);
+        const dest = path.join(CACHE_DIR, file);
+        renameSync(src, dest);
+      }
+    }
+    console.log('[migrate] Migrated legacy cache files to cachedata/');
+  } catch (e) {
+    console.warn('[migrate] Failed to migrate legacy cache folder:', e.message);
+  }
+}
 
 try {
   if (!existsSync(CACHE_DIR)) mkdirSync(CACHE_DIR, { recursive: true });
   if (!existsSync(LOG_DIR)) mkdirSync(LOG_DIR, { recursive: true });
   if (!existsSync(CONFIG_DIR)) mkdirSync(CONFIG_DIR, { recursive: true });
 } catch (e) {
-  console.warn('Could not ensure cache/log/config dirs:', e.message);
+  console.warn('Could not ensure cachedata/log/config dirs:', e.message);
 }
 
 // === Logging setup (file + console, 2MB rotation) ===
@@ -114,7 +132,7 @@ process.on('unhandledRejection', (reason) => {
   writeLog('FATAL', 'Unhandled rejection:', reason?.stack || reason);
 });
 
-// Migrate legacy cache files from DATA_DIR root into cache/ (one-time for existing users)
+// Migrate legacy cache files from DATA_DIR root into cachedata/ (one-time for existing users)
 const legacyCacheFiles = [
   'games_cache.json',
   'steam_app_list_cache.json',
@@ -136,7 +154,7 @@ for (const fname of legacyCacheFiles) {
   if (existsSync(oldP) && !existsSync(newP)) {
     try {
       renameSync(oldP, newP);
-      console.log(`[migrate] Moved legacy cache file ${fname} -> cache/`);
+      console.log(`[migrate] Moved legacy cache file ${fname} -> cachedata/`);
     } catch (e) {
       console.warn(`[migrate] Failed to move ${fname}:`, e.message);
     }
@@ -1676,30 +1694,37 @@ async function writeJsonFile(filePath, data) {
 // These ensure the one-time automatic initial scans (after first setup) only happen once ever.
 // After that, crawlers only run when user explicitly clicks the buttons in Settings.
 // If app is stopped/relaunched mid-scan, it won't auto-resume or auto-run on next launch.
+let scanStatusCache = null;
+
 async function loadScanStatus() {
+  if (scanStatusCache) return scanStatusCache;
+
   if (existsSync(SCAN_STATUS_PATH)) {
     try {
       const data = JSON.parse(await fs.readFile(SCAN_STATUS_PATH, 'utf8'));
-      return {
+      scanStatusCache = {
         metacritic: !!data.metacritic,
         hltb: !!data.hltb,
         reviews: !!data.reviews,
         steamRatings: !!data.steamRatings
       };
+      return scanStatusCache;
     } catch (e) {
       console.warn('Failed to parse scan_status.json, resetting:', e.message);
     }
   }
-  return {
+  scanStatusCache = {
     metacritic: false,
     hltb: false,
     reviews: false,
     steamRatings: false
   };
+  return scanStatusCache;
 }
 
 async function saveScanStatus(status) {
   try {
+    scanStatusCache = status;
     await fs.writeFile(SCAN_STATUS_PATH, JSON.stringify(status, null, 2), 'utf-8');
   } catch (error) {
     console.error(`Error writing scan_status.json:`, error);
@@ -1774,13 +1799,17 @@ async function runAutoCrawlersIfNeeded(games) {
     didChangeScanned = true;
   }
 
-  // Case D: New games introduced (only if initial runs have already occurred, otherwise handled by Cases A-C)
-  if (scanStatus.reviews && scanStatus.steamRatings && scanStatus.metacritic && scanStatus.hltb) {
-    if (newGames.length > 0) {
-      console.log(`[Auto-Scan] Detected ${newGames.length} new games in library. Scanning new games only...`);
-      crawlMissingReviewCounts(newGames);
-      crawlMissingMetacriticScores(newGames);
-      crawlMissingHLTB(newGames);
+  // Case D: New games introduced (only trigger crawlers if the respective scan has not completed)
+  if (newGames.length > 0) {
+    const runReviews = !scanStatus.reviews || !scanStatus.steamRatings;
+    const runMeta = !scanStatus.metacritic;
+    const runHltb = !scanStatus.hltb;
+
+    if (runReviews || runMeta || runHltb) {
+      console.log(`[Auto-Scan] Detected ${newGames.length} new games in library. Running incomplete auto-crawlers only...`);
+      if (runReviews) crawlMissingReviewCounts(newGames);
+      if (runMeta) crawlMissingMetacriticScores(newGames);
+      if (runHltb) crawlMissingHLTB(newGames);
       
       // Mark these new games as scanned
       newGames.forEach(g => scannedSet.add(Number(g.appid)));
@@ -2255,6 +2284,65 @@ function mergeAndPreserveDateAdded(newGames, oldGames) {
   });
 }
 
+// Once per process: full playtime refresh (Steam API + localconfig) on first library load
+let bulkPlaytimeSyncedThisProcess = false;
+
+/**
+ * Merge playtimes for every game in the library cache from localconfig.vdf + Steam GetOwnedGames.
+ * Uses max(existing, local, api) so we never regress. Returns { cache, updated, changedCount }.
+ */
+async function syncAllPlaytimesIntoCache(config, cache) {
+  if (!Array.isArray(cache) || cache.length === 0) {
+    return { cache: cache || [], updated: false, changedCount: 0 };
+  }
+
+  cachedPlaytimeFromLocal = null;
+  const playtimeMap = await getPlaytimeMapFromLocalConfig();
+
+  const apiMap = new Map();
+  if (config?.apiKey && config?.steamId) {
+    try {
+      console.log('[playtime] Bulk sync: fetching playtimes from Steam API for all owned games...');
+      const apiGames = await fetchGamesFromSteam(config.apiKey, config.steamId);
+      for (const g of apiGames) {
+        if (g && g.appid != null) apiMap.set(Number(g.appid), g);
+      }
+      console.log(`[playtime] Bulk sync: Steam API returned ${apiMap.size} games`);
+    } catch (e) {
+      console.warn('[playtime] Bulk Steam API fetch failed, using localconfig only:', e.message);
+    }
+  }
+
+  let changedCount = 0;
+  const nextCache = cache.map(g => {
+    if (!g || g.appid == null) return g;
+    const appid = Number(g.appid);
+    const prev = Number(g.playtime_forever) || 0;
+    const local = playtimeMap.has(appid) ? Number(playtimeMap.get(appid)) : null;
+    const apiG = apiMap.get(appid);
+    const api = apiG && typeof apiG.playtime_forever === 'number' ? apiG.playtime_forever : null;
+
+    let next = prev;
+    if (local !== null && !Number.isNaN(local) && local > next) next = local;
+    if (api !== null && !Number.isNaN(api) && api > next) next = api;
+
+    let changed = false;
+    const out = { ...g };
+    if (next !== prev) {
+      out.playtime_forever = next;
+      changed = true;
+    }
+    if (apiG && typeof apiG.rtime_last_played === 'number' && apiG.rtime_last_played !== g.rtime_last_played) {
+      out.rtime_last_played = apiG.rtime_last_played;
+      changed = true;
+    }
+    if (changed) changedCount++;
+    return out;
+  });
+
+  return { cache: nextCache, updated: changedCount > 0, changedCount };
+}
+
 // 3. GET /api/games
 app.get('/api/games', async (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
@@ -2280,7 +2368,7 @@ app.get('/api/games', async (req, res) => {
       await writeJsonFile(CACHE_PATH, cache);
     }
     
-    // Merge live local playtime updates from localconfig.vdf
+    // Merge live local playtime updates from localconfig.vdf (fast path, every request)
     try {
       cachedPlaytimeFromLocal = null; // force fresh read
       const playtimeMap = await getPlaytimeMapFromLocalConfig();
@@ -2307,12 +2395,39 @@ app.get('/api/games', async (req, res) => {
     try {
       console.log('Cache empty, performing initial fetch from Steam API...');
       const games = await fetchGamesFromSteam(config.apiKey, config.steamId);
-      const gamesWithDates = mergeAndPreserveDateAdded(games, []);
-      await writeJsonFile(CACHE_PATH, gamesWithDates);
+      let gamesWithDates = mergeAndPreserveDateAdded(games, []);
+      // Merge localconfig playtimes (API already applied; local may be higher for some titles)
+      cachedPlaytimeFromLocal = null;
+      const playtimeMap = await getPlaytimeMapFromLocalConfig();
+      gamesWithDates = gamesWithDates.map(g => {
+        if (!g?.appid) return g;
+        const local = playtimeMap.get(g.appid);
+        if (local !== undefined && local > (g.playtime_forever || 0)) {
+          return { ...g, playtime_forever: local };
+        }
+        return g;
+      });
       cache = gamesWithDates;
+      await writeJsonFile(CACHE_PATH, cache);
+      bulkPlaytimeSyncedThisProcess = true;
     } catch (error) {
       console.error('Initial fetch failed:', error);
       return res.json({ games: [], error: 'Failed to fetch games from Steam API. Check credentials.' });
+    }
+  }
+
+  // First library load this process: refresh ALL playtimes from Steam API + localconfig
+  if (cache && !bulkPlaytimeSyncedThisProcess) {
+    bulkPlaytimeSyncedThisProcess = true;
+    try {
+      const result = await syncAllPlaytimesIntoCache(config, cache);
+      cache = result.cache;
+      if (result.updated) {
+        await writeJsonFile(CACHE_PATH, cache);
+      }
+      console.log(`[playtime] First-load bulk sync complete: ${result.changedCount} game(s) updated`);
+    } catch (bulkErr) {
+      console.warn('[playtime] First-load bulk sync failed:', bulkErr.message);
     }
   }
 
@@ -2693,6 +2808,8 @@ app.post('/api/games/refresh', async (req, res) => {
     // Clear local VDF caches so refresh picks up latest playtimes/configs
     cachedAppIdsFromLocal = null;
     cachedPlaytimeFromLocal = null;
+    // Full Steam refresh already includes API playtimes
+    bulkPlaytimeSyncedThisProcess = true;
 
     const localGames = await getInstalledGamesFromManifests();
     const localAppIds = new Set(localGames.map(g => g.appid));
@@ -3085,6 +3202,150 @@ app.get('/api/game-running', async (req, res) => {
   const running = await isGameRunning(appId);
   res.json({ running });
 });
+
+/**
+ * Sync playtimes for the entire library (localconfig + Steam GetOwnedGames).
+ * Used on demand; first app load also runs this automatically via GET /api/games.
+ */
+app.post('/api/games/sync-all-playtimes', async (req, res) => {
+  try {
+    const config = await readJsonFile(CONFIG_PATH, null);
+    if (!config?.apiKey || !config?.steamId) {
+      return res.status(400).json({ error: 'Steam credentials not configured' });
+    }
+    let cache = await readJsonFile(CACHE_PATH, null) || [];
+    const result = await syncAllPlaytimesIntoCache(config, cache);
+    cache = result.cache;
+    if (result.updated) {
+      await writeJsonFile(CACHE_PATH, cache);
+    }
+    bulkPlaytimeSyncedThisProcess = true;
+    res.json({
+      success: true,
+      updated: result.updated,
+      changedCount: result.changedCount,
+      games: cache
+    });
+  } catch (err) {
+    console.error('[sync-all-playtimes] failed:', err);
+    res.status(500).json({ error: err.message || 'Failed to sync playtimes' });
+  }
+});
+
+/**
+ * Sync playtime for one game after a play session.
+ * Re-reads localconfig.vdf (fresh) and prefers Steam API (recently played / owned)
+ * so the UI can show updated hours without a full library refresh.
+ */
+app.post('/api/games/sync-playtime', async (req, res) => {
+  const appId = parseInt(req.body?.appId ?? req.body?.appid, 10);
+  if (!appId) {
+    return res.status(400).json({ error: 'App ID is required' });
+  }
+
+  try {
+    const config = await readJsonFile(CONFIG_PATH, null);
+    let cache = await readJsonFile(CACHE_PATH, null) || [];
+    const idx = cache.findIndex(g => g && Number(g.appid) === appId);
+    const prevPlaytime = idx >= 0 ? (cache[idx].playtime_forever || 0) : 0;
+
+    // Force re-parse of localconfig.vdf (Steam often flushes Playtime on exit)
+    cachedPlaytimeFromLocal = null;
+    const playtimeMap = await getPlaytimeMapFromLocalConfig();
+    let localPlaytime = playtimeMap.get(appId);
+    if (localPlaytime === undefined) localPlaytime = null;
+
+    let apiPlaytime = null;
+    if (config?.apiKey && config?.steamId) {
+      apiPlaytime = await fetchPlaytimeForAppFromSteam(config.apiKey, config.steamId, appId);
+    }
+
+    const candidates = [prevPlaytime];
+    if (localPlaytime !== null && !Number.isNaN(localPlaytime)) candidates.push(localPlaytime);
+    if (apiPlaytime !== null && !Number.isNaN(apiPlaytime)) candidates.push(apiPlaytime);
+    const newPlaytime = Math.max(...candidates);
+
+    let updated = false;
+    if (idx >= 0 && newPlaytime !== prevPlaytime) {
+      cache[idx].playtime_forever = newPlaytime;
+      // rtime_last_played when Steam API provided it
+      if (apiPlaytime !== null) {
+        cache[idx].rtime_last_played = Math.floor(Date.now() / 1000);
+      }
+      await writeJsonFile(CACHE_PATH, cache);
+      updated = true;
+    } else if (idx >= 0 && newPlaytime > 0 && (cache[idx].playtime_forever || 0) !== newPlaytime) {
+      cache[idx].playtime_forever = newPlaytime;
+      await writeJsonFile(CACHE_PATH, cache);
+      updated = true;
+    }
+
+    console.log(
+      `[sync-playtime] app ${appId}: prev=${prevPlaytime} local=${localPlaytime} api=${apiPlaytime} → ${newPlaytime}` +
+      (updated ? ' (cache updated)' : '')
+    );
+
+    res.json({
+      success: true,
+      appId,
+      playtime_forever: newPlaytime,
+      previous: prevPlaytime,
+      local: localPlaytime,
+      api: apiPlaytime,
+      updated: updated || newPlaytime !== prevPlaytime
+    });
+  } catch (err) {
+    console.error('[sync-playtime] failed:', err);
+    res.status(500).json({ error: err.message || 'Failed to sync playtime' });
+  }
+});
+
+/** Prefer GetRecentlyPlayedGames, fall back to filtered GetOwnedGames. Returns minutes or null. */
+async function fetchPlaytimeForAppFromSteam(apiKey, steamId, appId) {
+  // 1) Recently played (light, usually includes the game just closed)
+  try {
+    const recentUrl =
+      `https://api.steampowered.com/IPlayerService/GetRecentlyPlayedGames/v1/` +
+      `?key=${encodeURIComponent(apiKey)}&steamid=${encodeURIComponent(steamId)}&count=50&format=json`;
+    const recentRes = await fetch(recentUrl);
+    if (recentRes.ok) {
+      const data = await recentRes.json();
+      const games = data?.response?.games || [];
+      const match = games.find(g => Number(g.appid) === Number(appId));
+      if (match && typeof match.playtime_forever === 'number') {
+        return match.playtime_forever;
+      }
+    }
+  } catch (e) {
+    console.warn('[sync-playtime] GetRecentlyPlayedGames failed:', e.message);
+  }
+
+  // 2) Owned games with appids_filter via input_json
+  try {
+    const input = JSON.stringify({
+      steamid: String(steamId),
+      appids_filter: [appId],
+      include_appinfo: false,
+      include_played_free_games: true
+    });
+    const ownedUrl =
+      `https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/` +
+      `?key=${encodeURIComponent(apiKey)}&input_json=${encodeURIComponent(input)}&format=json`;
+    const ownedRes = await fetch(ownedUrl);
+    if (ownedRes.ok) {
+      const data = await ownedRes.json();
+      const games = data?.response?.games || [];
+      const match = games.find(g => Number(g.appid) === Number(appId));
+      if (match && typeof match.playtime_forever === 'number') {
+        return match.playtime_forever;
+      }
+    }
+  } catch (e) {
+    console.warn('[sync-playtime] GetOwnedGames filter failed:', e.message);
+  }
+
+  return null;
+}
 
 // Helper: Parse visible library AppIDs from Steam client's librarycache folder
 async function getLibraryCacheAppIds() {
